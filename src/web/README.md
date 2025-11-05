@@ -1,73 +1,42 @@
-# React + TypeScript + Vite
+# KOENO-APP Web フロントエンド (`src/web/README.md`)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+## 1\. 概要
 
-Currently, two official plugins are available:
+この `src/web/` フォルダは、`KOENO-APP` プロジェクトのフロントエンド（UI）です。 React (Vite + TypeScript) および Redux Toolkit を使用しています。
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+主な機能は、ユーザーに「ターゲットの声」と「会話」の録音またはファイルアップロードを促し、`src/api/` サーバーの `/transcribe` エンドポイントに送信することです。
 
-## React Compiler
+## 2\. システム前提条件
 
-The React Compiler is currently not compatible with SWC. See [this issue](https://github.com/vitejs/vite-plugin-react/issues/428) for tracking the progress.
+- Node.js (npm)
+    
+- `src/api/` サーバーが `http://127.0.0.1:8000` で起動していること。
+    
 
-## Expanding the ESLint configuration
+## 3\. ステップ1: 依存関係のインストール
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+`src/web/` フォルダ（このREADMEがある場所）で、`npm install` を実行します。
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+_(このプロジェクトは Redux Toolkit (`@reduxjs/toolkit react-redux`) を使用しています。`fetch` APIを使用するため、`axios` は不要です)_
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## 4\. ステップ2: 開発サーバーの起動
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+`src/api/` サーバー（`http://127.0.0.1:8000`）が起動していることを確認してから、**別のターミナル**で以下のコマンドを実行し、Viteの開発サーバーを起動します。
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+- サーバーは `http://localhost:5173/` で起動します。
+    
+- ブラウザで `http://localhost:5173/` を開いてください。
+    
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## 5\. ステップ3: 実行
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+ブラウザに表示された「ステップ2b: フロントエンド」の画面で、以下の操作を行います。
+
+1. **1\. ターゲットの声を登録:** 「🎤 録音開始」または「📁 ファイル選択」で、ターゲット（本人）の声（`my_voice.webm`相当）を指定します。
+    
+2. **2\. 会話を録音:** 「🎤 録音開始」または「📁 ファイル選択」で、会話（本人＋他人）の音声（`test.webm`相当）を指定します。
+    
+3. **3\. API実行:** 「分離・文字起こし実行」ボタンを押します。
+    
+
+**期待する結果:** `src/api/` サーバー（CORS対応済み）への `fetch` が成功し、「4. カルテ結果」セクションに `[TARGET]` と `[OTHER]` に分離された文字起こし結果が表示されます。
