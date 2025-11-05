@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PoC用 録音ツール</title>
+    <style>
+        body { font-family: sans-serif; max-width: 600px; margin: 2em auto; padding: 0 1em; }
+        h1 { font-size: 1.5em; }
+        #controls { margin-bottom: 1em; }
+        button { font-size: 1em; padding: 0.5em 1em; margin-right: 0.5em; }
+        #recordButton[disabled] { background-color: #ccc; }
+        #stopButton[disabled] { background-color: #ccc; }
+        #downloadLinks { list-style: none; padding: 0; }
+        #downloadLinks li { background-color: #f4f4f4; border: 1px solid #ddd; padding: 0.5em; margin-bottom: 0.5em; display: flex; justify-content: space-between; align-items: center; }
+    </style>
+</head>
+<body>
+
+    <h1>PoC用 録音ツール (test.webm 作成)</h1>
+    <p>「録音開始」ボタンを押して、2人以上で会話してください。</p>
+
+    <div id="controls">
+        <button id="recordButton">録音開始</button>
+        <button id="stopButton" disabled>録音停止</button>
+    </div>
+
+    <ul id="downloadLinks"></ul>
+
+    <script>
+        const recordButton = document.getElementById('recordButton');
+        const stopButton = document.getElementById('stopButton');
+        const downloadLinks = document.getElementById('downloadLinks');
+
+        let mediaRecorder;
+        let audioChunks = [];
+        let stream;
+
+        // 録音開始処理
+        recordButton.addEventListener('click', async () => {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // MimeTypeを明示的に指定 (opusが一般的)
+                const options = { mimeType: 'audio/webm; codecs=opus' };
+                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                     // opusがダメならデフォルト（webmの何か）にフォールバック
+                     options.mimeType = 'audio/webm';
+                     if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                        alert("このブラウザはaudio/webm録音に対応していません。");
+                        return;
+                     }
+                }
+                
+                mediaRecorder = new MediaRecorder(stream, options);
+
+                mediaRecorder.ondataavailable = (event) => {
+                    audioChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = () => {
+                    // 録音データをBlobとしてまとめる
+                    const audioBlob = new Blob(audioChunks, { type: options.mimeType });
+                    
+                    // ダウンロードリンクを作成
+                    createDownloadLink(audioBlob);
+
+                    // チャンクをリセット
+                    audioChunks = [];
+                    stream.getTracks().forEach(track => track.stop()); // マイクを解放
+                };
+
+                mediaRecorder.start();
+                recordButton.disabled = true;
+                stopButton.disabled = false;
+
+            } catch (err) {
+                console.error('マイクへのアクセス許可が必要です:', err);
+                alert('マイクへのアクセス許可が必要です。');
+            }
+        });
+
+        // 録音停止処理
+        stopButton.addEventListener('click', () => {
+            if (mediaRecorder) {
+                mediaRecorder.stop();
+                recordButton.disabled = false;
+                stopButton.disabled = true;
+            }
+        });
+
+        // ダウンロードリンク作成処理
+        function createDownloadLink(blob) {
+            const url = URL.createObjectURL(blob);
+            const li = document.createElement('li');
+            const a = document.createElement('a');
+            
+            a.href = url;
+            // ★ PoCスクリプトで使うため、ファイル名を 'test.webm' に固定
+            a.download = 'test.webm'; 
+            a.textContent = 'test.webm をダウンロード';
+
+            li.appendChild(a);
+            downloadLinks.prepend(li); // 新しいものが上に来るように
+        }
+    </script>
+
+</body>
+</html>
