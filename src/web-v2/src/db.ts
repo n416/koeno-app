@@ -1,3 +1,7 @@
+/*
+ * ファイルパス: src/db.ts
+ * (Task 2 で作成したファイル)
+ */
 import Dexie, { type Table } from 'dexie';
 
 /**

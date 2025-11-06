@@ -37,3 +37,7 @@ Thumbs.db
 .DS_Store
 # VSCode
 .vscode/
+
+# env file
+.env
+.env.*

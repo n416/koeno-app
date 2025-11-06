@@ -1,0 +1,103 @@
+/// <reference lib="WebWorker" />
+import { precacheAndRoute } from 'workbox-precaching'
+import { db } from './db' // Dexie (IndexedDB)
+
+declare const self: ServiceWorkerGlobalScope & { __WB_MANIFEST: any }
+
+// .env から API のベース URL を取得 (Vite/Rollup がビルド時に置換)
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+
+console.log('[SW] サービスワーカー (v2-full, env) が読み込まれました。')
+console.log(`[SW] API_BASE_URL: ${API_BASE_URL}`)
+
+// 1. PWAのファイルキャッシュ (Workbox)
+precacheAndRoute(self.__WB_MANIFEST || [])
+
+// 2. 'install' イベント (すぐに有効化)
+self.addEventListener('install', () => {
+  console.log('[SW] \'install\' イベント発生。skipWaiting() します。')
+  self.skipWaiting()
+})
+
+// 3. 'activate' イベント (すぐに制御を奪う)
+self.addEventListener('activate', (event: any) => {
+  console.log('[SW] \'activate\' イベント発生。clients.claim() します。')
+  event.waitUntil(self.clients.claim())
+})
+
+// 4. 'sync' イベント (Background Sync)
+const SYNC_TAG = 'koeno-sync'
+
+/**
+ * ★ サービスワーカー内で実行される「バックグラウンド同期」処理 ★
+ */
+const processSyncQueue = async () => {
+  console.log('[SW] processSyncQueue が呼び出されました。');
+
+  if (!API_BASE_URL) {
+    console.error('[SW] VITE_API_BASE_URL が設定されていません。');
+    // リトライさせるためにエラーを throw
+    throw new Error('API URL is not configured.');
+  }
+  
+  const API_URL = `${API_BASE_URL}/upload_recording`;
+
+  try {
+    const pendingRecords = await db.local_recordings.where('upload_status').equals('pending').toArray();
+    
+    if (pendingRecords.length === 0) {
+      console.log('[SW] 同期対象のデータはありませんでした。');
+      return; // 正常終了
+    }
+
+    console.log(`[SW] ${pendingRecords.length} 件のデータをアップロードします...`);
+    
+    const uploadPromises = pendingRecords.map(async (record) => {
+      if (!record.local_id) return; // 型ガード
+
+      const formData = new FormData();
+      formData.append('caregiver_id', record.caregiver_id);
+      formData.append('memo_text', record.memo_text);
+      formData.append('audio_blob', record.audio_blob, 'recording.webm');
+      
+      try {
+        const response = await fetch(API_URL, { method: 'POST', body: formData });
+        
+        if (response.ok) {
+          // アップロード成功
+          await db.local_recordings.update(record.local_id, { upload_status: 'uploaded' });
+          console.log(`[SW] ${record.local_id} のアップロード成功。`);
+        } else {
+          // サーバーが 404 や 500 を返した場合
+          console.error(`[SW] ${record.local_id} のアップロード失敗 (サーバーエラー):`, response.status);
+          // (リトライしても無駄な可能性が高いため、ここではエラーを throw しない)
+          // (もしリトライさせたい場合は throw new Error(...) する)
+        }
+      } catch (fetchError) {
+        // ネットワークエラー (APIサーバーが落ちている場合など)
+        console.error(`[SW] ${record.local_id} のアップロード失敗 (ネットワーク):`, fetchError);
+        // ★ ネットワークエラーはリトライすべきなので、エラーを throw する
+        throw fetchError;
+      }
+    });
+
+    // すべてのアップロード試行が完了するのを待つ
+    await Promise.all(uploadPromises);
+    
+    console.log('[SW] 同期処理が完了しました。');
+
+  } catch (error) {
+    console.error('[SW] 同期キューの処理中にエラーが発生しました:', error);
+    // ★ ネットワークエラーなどでリトライさせるため、エラーを throw する
+    throw new Error('Sync processing failed, will retry.');
+  }
+};
+
+// 'sync' イベントリスナー
+self.addEventListener('sync', (event: any) => {
+  console.log(`[SW] 'sync' イベントを受信しました！ タグ: ${event.tag}`);
+  if (event.tag === SYNC_TAG) {
+    // processSyncQueue が完了するまで Service Worker を生かし続ける
+    event.waitUntil(processSyncQueue());
+  }
+});
