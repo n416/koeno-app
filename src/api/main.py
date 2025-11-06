@@ -2,7 +2,7 @@ import os
 import uvicorn
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional # ★ List をインポートしていることを確認
 import databases
 import sqlalchemy
 from pydantic import BaseModel
@@ -56,9 +56,16 @@ class RecordSummary(BaseModel):
     recording_id: int
     ai_status: str
     memo_text: Optional[str]
-    transcription_result: Optional[Dict[str, Any]] # JSON想定
+    
+    # ★★★ ここを修正 ★★★
+    # (誤: 辞書を期待していた)
+    # transcription_result: Optional[Dict[str, Any]]
+    # (正: 辞書のリスト [ { ... }, { ... } ] を期待する)
+    transcription_result: Optional[List[Dict[str, Any]]]
+    # ★★★ ここまで修正 ★★★
+    
     summary_result: Optional[str]
-    created_at: datetime.datetime
+    created_at: datetime.datetime # (Noneを許容しない)
 
 # -----------------------------------------------------------
 # 4. FastAPI アプリケーションの定義
@@ -135,7 +142,8 @@ async def upload_recording(
         memo_text=memo_text,
         ai_status="pending",
         transcription_result=None, # AI未処理
-        summary_result=None        # AI未処理
+        summary_result=None,       # AI未処理
+        created_at=datetime.datetime.utcnow() # (修正済み: created_at を明示的に挿入)
     )
     
     try:
@@ -168,6 +176,8 @@ async def get_my_records(
     
     try:
         completed_records = await database.fetch_all(query)
+        # (ここで Pydantic (RecordSummary) がDBの結果を検証する)
+        # (修正後の RecordSummary [List[Dict]] で検証される)
         return completed_records
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"記録の取得に失敗しました: {e}")

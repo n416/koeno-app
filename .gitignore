@@ -41,3 +41,9 @@ Thumbs.db
 # env file
 .env
 .env.*
+
+# db
+.db
+
+# モデルファイル
+pretrained_models/
