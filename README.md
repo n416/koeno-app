@@ -1,79 +1,76 @@
-# KOENO-APP (話者分離・文字起こしWebアプリ)
+# KOENO-APP (v2.0) - PWA音声記録システム
 
-このリポジトリは、「特定の人の声」と「それ以外の人の声」を分離して文字起こしする「カルテアプリ」の技術検証（PoC）およびプロトタイプです。
+## 1. 概要
 
-モノレポ構成を採用しており、`src/api/`（バックエンド）と `src/web/`（フロントエンド）が含まれています。
+KOENO-APP (v2.0) は、介護現場での音声記録とレビューを目的としたWebアプリケーションです。
 
-## 📍 プロジェクト構成
+* **PWA（スマホ）**: オフライン対応の録音インターフェース。録音データはローカルDB（Dexie.js）に保存され、オンライン時に自動でバックグラウンド同期されます。
+* **PC版（レビュー）**: PCブラウザからアクセスするレビュー画面。AI（Whisper, Pyannote）によって文字起こし・話者分離された結果を確認・修正します。
+* **管理者機能**: 介護士ID（NFC/PIN）のマスタ管理機能を提供します。
 
-* `src/api/`: **バックエンド API サーバー**
-    * Python (3.12) + FastAPI
-    * AIモデル (`pyannote`, `speechbrain`, `whisper`) をロードし、`/transcribe` エンドポイントを提供します。
-    * 詳細は `src/api/README.md` を参照してください。
-* `src/web/`: **フロントエンド Web アプリ**
-    * React (Vite + TypeScript) + Redux Toolkit
-    * 録音/アップロードUIを提供し、`/transcribe` API を呼び出して結果を表示します。
-    * 詳細は `src/web/README.md` を参照してください。
-* `src/poc/`: **初期技術検証（PoC）**
-    * APIサーバーの核となるロジック（分離・比較・遡及判定）を検証したPythonスクリプト群が格納されています。
-    * 詳細は `src/poc/README.md` を参照してください。
+## 2. プロジェクト構成 (v2.0)
 
-## 🚀 開発環境の実行手順（Windows）
+-   `src/api/` (Python/FastAPI)
+    -   `main.py`: APIサーバー（認証, DB操作, ID管理）
+    -   `run_worker.py`: AI処理ワーカー（文字起こし, 話者分離）
+    -   `setup_initial_admin.py`: 初回管理者セットアップスクリプト
+    -   `koeno_app.db`: SQLite データベース
+-   `src/web-v2/` (React/TypeScript)
+    -   v2.0のPWAフロントエンド（MUI + PWA (Vite) + Dexie.js）
+-   `Caddyfile`: リバースプロキシ（Caddy）設定ファイル
+-   `ngrok.yml`: ngrokトンネル設定ファイル
 
-このアプリを実行するには、**2つのターミナル**を同時に起動する必要があります。
+## 3. 開発環境の実行手順 (4ターミナル必須) (PO 4.2)
 
-### 共通の前提条件
+完全な開発・テスト環境には、以下の4つのターミナル（プロセス）を同時に起動する必要があります。
 
-1.  **Python 3.12**
-2.  **Node.js** (npm)
-3.  **FFmpeg v7.x** (v8以降は `pyannote/torchcodec` との互換性問題があるため非推奨。[詳細](src/api/README.md))
-4.  **Hugging Face 認証** (`hf auth login` が完了しており、[必要な規約](src/api/README.md)に同意済みであること)
+### ターミナル 1: APIサーバー (FastAPI)
 
----
+1.  `cd src/api`
+2.  `.\.venv\Scripts\Activate.ps1` (仮想環境を有効化)
+3.  `py .\main.py` (APIサーバーを 127.0.0.1:8000 で起動)
 
-### ターミナル 1: APIサーバー (バックエンド) の起動
+### ターミナル 2: AIワーカー
 
-1.  `src/api/` フォルダに移動します。
-    ```bash
-    cd src/api
-    ```
-2.  （初回のみ）仮想環境のセットアップとライブラリのインストールを行います。
-    ```bash
-    py -3.12 -m venv .venv
-    .\.venv\Scripts\Activate.ps1
-    pip install -r requirements.txt
-    ```
-3.  （2回目以降）仮想環境に入り、FFmpeg v7 のPATHを通します。
-    ```powershell
-    .\.venv\Scripts\Activate.ps1
-    $env:Path = "C:\ffmpeg\bin;" + $env:Path 
-    ```
-4.  サーバーを起動します。
-    ```bash
-    py -3.12 .\main.py
-    ```
-    * `Uvicorn running on http://127.0.0.1:8000` と表示されれば成功です。
+1.  `cd src/api`
+2.  `.\.venv\Scripts\Activate.ps1` (仮想環境を有効化)
+3.  `$env:HF_TOKEN = "hf_YOUR_HUGGINGFACE_TOKEN"` (HuggingFaceトークンを設定)
+4.  `py .\run_worker.py` (AIワーカーを起動)
 
----
+### ターミナル 3: フロントエンド (Vite)
 
-### ターミナル 2: Webアプリ (フロントエンド) の起動
+1.  `cd src/web-v2`
+2.  `npm install` (初回のみ)
+3.  `npm run dev` (Vite 開発サーバーを 192.168.0.16:5173 で起動)
 
-1.  **新しいターミナル**を開き、`src/web/` フォルダに移動します。
-    ```bash
-    cd src/web
-    ```
-2.  （初回のみ）ライブラリをインストールします。
-    ```bash
-    npm install
-    ```
-3.  （2回目以降）開発サーバーを起動します。
-    ```bash
-    npm run dev
-    ```
-    * `Local: http://localhost:5173/` と表示されれば成功です。
+### ターミナル 4: リバースプロキシ (Caddy & ngrok)
 
----
+1.  `cd [プロジェクトルート]`
+2.  (Caddyを起動) `caddy run --config Caddyfile`
+3.  (別ターミナルまたはタブで ngrok を起動) `ngrok start --all --config ngrok.yml`
+    * (ngrok.yml の `default` トンネルが起動します)
 
-### 実行
+## 4. テスト環境 (リバースプロキシ) 構築手順 (PO 4.2)
 
-ブラウザで `http://localhost:5173/` にアクセスし、UIの指示に従って操作してください。
+スマホ（Android）からのWeb NFCテストや、`https://` 環境でのPWA（Service Worker）テストには、CaddyとngrokによるHTTPSリバースプロキシ環境が**必須**です。
+
+### 4.1. 必要なツール
+
+1.  **Caddy v2:**
+    * インストール: `winget install Caddy` または公式サイトからダウンロード。
+    * 設定: プロジェクトルートの `Caddyfile` に設定が定義済みです。Caddyは 192.168.0.16:80 で待機し、`/api` を T1（API）へ、他を T3（Vite）へ転送します。
+2.  **ngrok:**
+    * インストール: `winget install ngrok.ngrok` または公式サイトからダウンロード。
+    * 認証 (初回のみ): `ngrok authtoken YOUR_NGROK_TOKEN` を実行。
+    * 設定: プロジェクトルートの `ngrok.yml` に設定が定義済みです。Caddy (192.168.0.16:80) へのトンネルを定義しています。
+
+### 4.2. 実行 (ターミナル 4)
+
+1.  **Caddyの起動:**
+    * プロジェクトルート（`Caddyfile` がある場所）で以下を実行します。
+    * `caddy run --config Caddyfile`
+2.  **ngrokの起動:**
+    * プロジェクトルート（`ngrok.yml` がある場所）で以下を実行します。
+    * `ngrok start --all --config ngrok.yml`
+
+これにより発行された `https://...ngrok-free.dev` のURLにスマホからアクセスすることで、Web NFC を含むすべての機能がテスト可能になります。
