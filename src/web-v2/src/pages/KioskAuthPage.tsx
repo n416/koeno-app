@@ -2,6 +2,16 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
+// ★★★ Task 2.2: MUIコンポーネントをインポート ★★★
+import {
+  Container,
+  Box,
+  Typography,
+  Alert,
+  CircularProgress
+} from '@mui/material';
+import { Nfc as NfcIcon } from '@mui/icons-material'; // アイコン
+
 // .env から API のベース URL を取得 ( "/api" または undefined が入る)
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 // ★ 修正: 相対パス (プロキシ 経由) にする
@@ -9,7 +19,7 @@ const AUTH_URL = `${API_BASE_URL}/authenticate`; // -> /api/authenticate
 
 /**
  * Task 6.1 (Task 7.4 修正): PC版 認証ページ (KioskAuthPage)
- * API認証を行うようロジックを修正
+ * Task 2.2: MUI化
  */
 export const KioskAuthPage = () => {
   const [inputBuffer, setInputBuffer] = useState('');
@@ -62,7 +72,8 @@ export const KioskAuthPage = () => {
             navigate('/review/dashboard'); // ダッシュボードへ
           } else {
             // ★ API認証失敗 (401 Unauthorized など)
-            setError('認証に失敗しました。IDが正しくありません。');
+            const errMsg = await response.text();
+            setError(errMsg || '認証に失敗しました。IDが正しくありません。');
             setInputBuffer(''); // バッファをクリア
           }
           
@@ -92,28 +103,64 @@ export const KioskAuthPage = () => {
   };
 
   return (
-    <div onClick={focusInput} style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
-      <h1>KOENO-APP レビュー（PC版）</h1>
-      <p>USB-NFCリーダーをかざしてください</p>
-      <p>（またはIDを手入力してEnterキーを押してください）</p>
+    // ★★★ Task 2.2: MUI化 ★★★
+    <Container 
+      maxWidth="sm" 
+      onClick={focusInput} // 画面クリックで常に入力欄にフォーカス
+      sx={{ 
+        height: '100vh', 
+        display: 'flex', 
+        flexDirection: 'column', 
+        justifyContent: 'center', 
+        alignItems: 'center',
+        textAlign: 'center'
+      }}
+    >
+      <Box>
+        <Typography variant="h4" component="h1" gutterBottom>
+          KOENO-APP レビュー
+        </Typography>
+        
+        <NfcIcon sx={{ fontSize: 60, color: 'text.secondary' }} />
 
-      <input
-        ref={hiddenInputRef}
-        type="text"
-        value={inputBuffer}
-        onChange={handleChange}
-        onKeyDown={handleKeyDown}
-        onBlur={focusInput} 
-        autoFocus
-        disabled={loading} // ★ 認証中は入力を無効化
-        style={{
-          position: 'absolute',
-          opacity: 0,
-          top: '-1000px',
-        }}
-      />
-      
-      {error && <p style={{ color: 'red', marginTop: '20px' }}>{error}</p>}
-    </div>
+        <Typography variant="h6" sx={{ mt: 2 }}>
+          USB-NFCリーダーをかざしてください
+        </Typography>
+        <Typography variant="body1" color="text.secondary">
+          （またはIDを手入力してEnterキーを押してください）
+        </Typography>
+
+        <input
+          ref={hiddenInputRef}
+          type="text" // (passwordにするとNFCリーダーの入力が見えないためtext)
+          value={inputBuffer}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+          onBlur={focusInput} // フォーカスが外れても即座にフォーカスし直す
+          autoFocus
+          disabled={loading} // ★ 認証中は入力を無効化
+          style={{
+            // 隠しinput (MUI化対象外)
+            position: 'absolute',
+            opacity: 0,
+            top: '-1000px',
+          }}
+        />
+        
+        {/* --- ローディング・エラー表示 --- */}
+        {loading && (
+          <Box sx={{ mt: 3, display: 'flex', alignItems: 'center', gap: 2 }}>
+            <CircularProgress size={24} />
+            <Typography>{error || '認証中...'}</Typography>
+          </Box>
+        )}
+        
+        {!loading && error && (
+          <Alert severity="error" sx={{ mt: 3, width: '100%' }}>
+            {error}
+          </Alert>
+        )}
+      </Box>
+    </Container>
   );
 };

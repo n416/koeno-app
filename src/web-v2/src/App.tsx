@@ -4,11 +4,12 @@ import { AuthPage } from './pages/AuthPage';
 import { RecordPage } from './pages/RecordPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 
-// ★★★ Task 6: PC版レビュー画面のコンポーネントをインポート (名称変更) ★★★
-// import { AdminAuthPage } from './pages/AdminAuthPage'; // (変更前)
-import { KioskAuthPage } from './pages/KioskAuthPage'; // ★ 変更後
+import { KioskAuthPage } from './pages/KioskAuthPage';
 import { ReviewDashboardPage } from './pages/ReviewDashboardPage';
 import { ReviewDetailPage } from './pages/ReviewDetailPage';
+
+// ★★★ Task 1.3: 新しいID管理ページをインポート ★★★
+import { AdminUsersPage } from './pages/AdminUsersPage'; 
 
 function App() {
   return (
@@ -19,19 +20,22 @@ function App() {
         <Route path="/record" element={<RecordPage />} />
       </Route>
       
-      {/* ★★★ Task 6: PC版レビュー画面 (名称変更) ★★★ */}
+      {/* --- Task 6: PC版レビュー画面 --- */}
       
-      {/* PC版NFC認証 (Task 6.1) */}
-      {/* <Route path="/review" element={<AdminAuthPage />} /> */} {/* (変更前) */}
-      <Route path="/review" element={<KioskAuthPage />} /> {/* ★ 変更後 */}
+      {/* PC版NFC認証 */}
+      <Route path="/review" element={<KioskAuthPage />} />
       
       {/* PC版も AuthContext/ProtectedRoute を流用する */}
       <Route element={<ProtectedRoute />}>
-        {/* 記録一覧 (Task 6.2) */}
+        {/* 記録一覧 */}
         <Route path="/review/dashboard" element={<ReviewDashboardPage />} />
         
-        {/* 記録詳細 (Task 6.3) */}
+        {/* 記録詳細 */}
         <Route path="/review/detail/:id" element={<ReviewDetailPage />} />
+
+        {/* ★★★ Task 1.3: ID管理ページへのルートを有効化 ★★★ */}
+        <Route path="/review/admin/users" element={<AdminUsersPage />} />
+
       </Route>
       
     </Routes>

@@ -3,15 +3,41 @@ import { useAuth } from '../contexts/AuthContext';
 import { db } from '../db';
 import { useNavigate } from 'react-router-dom';
 
+// ★★★ Task 2.2: MUIコンポーネントをインポート ★★★
+import {
+  Container,
+  Box,
+  Button,
+  TextField,
+  Typography,
+  AppBar,
+  Toolbar,
+  // IconButton, (Button に startIcon を使うため不要に)
+  Snackbar,
+  Alert,
+  // AlertColor, (型なのでここから削除)
+} from '@mui/material';
+// ★★★ 修正: AlertColor は 'type' としてインポート ★★★
+import type { AlertColor } from '@mui/material/Alert'; 
+import {
+  Lock as LockIcon,
+  Mic as MicIcon,
+  Stop as StopIcon,
+  Warning as WarningIcon
+} from '@mui/icons-material';
+
 // .env から API のベース URL を取得 ( "/api" または undefined が入る)
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 /**
  * ★ RecordPage 内で実行される「フォアグラウンド同期」処理 ★
  */
-const processSyncQueue_Foreground = async (setStatusMessage: (msg: string) => void) => {
+// (setStatusMessage の型を変更)
+const processSyncQueue_Foreground = async (
+  setStatus: (message: string, severity: AlertColor) => void
+) => {
   console.log('[APP] 同期処理を開始します...');
-  setStatusMessage('同期処理を開始します...');
+  setStatus('同期処理を開始します...', 'info');
 
   // ★ 修正: 相対パス (プロキシ 経由) にする
   const API_URL = `${API_BASE_URL}/upload_recording`; // -> /api/upload_recording
@@ -20,12 +46,12 @@ const processSyncQueue_Foreground = async (setStatusMessage: (msg: string) => vo
     const pendingRecords = await db.local_recordings.where('upload_status').equals('pending').toArray();
     if (pendingRecords.length === 0) {
       console.log('[APP] 同期対象のデータはありませんでした。');
-      setStatusMessage('同期対象のデータはありません。');
+      setStatus('同期対象のデータはありません。', 'success');
       return true; // 正常終了
     }
 
     console.log(`[APP] ${pendingRecords.length} 件のデータをアップロードします...`);
-    setStatusMessage(`同期中... ( ${pendingRecords.length} 件)`);
+    setStatus(`同期中... ( ${pendingRecords.length} 件)`, 'info');
 
     const uploadPromises = pendingRecords.map(async (record) => {
       if (!record.local_id) return; // 型ガード
@@ -54,16 +80,16 @@ const processSyncQueue_Foreground = async (setStatusMessage: (msg: string) => vo
     await Promise.all(uploadPromises);
     
     console.log('[APP] 同期処理が完了しました。');
-    setStatusMessage('同期処理が正常に完了しました。');
+    setStatus('同期処理が正常に完了しました。', 'success');
     return true; // 正常終了
 
   } catch (error) {
-    console.error('[APP] 同期キューの処理中にエラーが発生しました:', error);
+    console.error('[SW] 同期キューの処理中にエラーが発生しました:', error);
     // (ts(18046) 対策)
     if (error instanceof Error) {
-      setStatusMessage(`エラー: 同期処理に失敗しました: ${error.message}`);
+      setStatus(`エラー: 同期処理に失敗しました: ${error.message}`, 'error');
     } else {
-      setStatusMessage(`エラー: 同期処理に失敗しました: ${String(error)}`);
+      setStatus(`エラー: 同期処理に失敗しました: ${String(error)}`, 'error');
     }
     throw error; // handleLock の catch で補足させるため throw
   }
@@ -75,20 +101,36 @@ export const RecordPage = () => {
   const navigate = useNavigate();
   const [isRecording, setIsRecording] = useState(false);
   const [memo, setMemo] = useState('');
+  
+  // ★★★ Task 2.2: Snackbar用のState ★★★
   const [statusMessage, setStatusMessage] = useState('');
+  const [statusSeverity, setStatusSeverity] = useState<AlertColor>('info');
+  const [isStatusOpen, setIsStatusOpen] = useState(false);
+  
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+
+  // ★★★ Task 2.2: setStatus 関数を定義 ★★★
+  const setStatus = (message: string, severity: AlertColor) => {
+    setStatusMessage(message);
+    setStatusSeverity(severity);
+    setIsStatusOpen(true);
+  };
+  const closeStatus = () => {
+    setIsStatusOpen(false);
+  };
+
 
   // ★★★ ロックボタン押下時の処理 ★★★
   const handleLock = async () => {
     console.log('[APP] ロックボタンが押されました。');
     if (isRecording) {
-      setStatusMessage('録音中はロックできません。録音を停止してください。');
+      setStatus('録音中はロックできません。録音を停止してください。', 'warning');
       console.warn('[APP] 録音中のためロック処理を中断しました。');
       return;
     }
     
-    setStatusMessage('同期処理を確認中...');
+    setStatus('同期処理を確認中...', 'info');
     console.log('[APP] 同期処理を確認します...');
 
     try {
@@ -98,7 +140,7 @@ export const RecordPage = () => {
       if (navigator.onLine) {
         console.log('[APP] オンラインです。フォアグラウンド同期を実行します。');
         // (ts(18046) 対策済み)
-        await processSyncQueue_Foreground(setStatusMessage);
+        await processSyncQueue_Foreground(setStatus);
         
       } else {
         console.log('[APP] オフラインです。バックグラウンド同期をスケジュールします。');
@@ -106,10 +148,10 @@ export const RecordPage = () => {
           console.log('[APP] registration.sync は存在します。');
           await registration.sync.register('koeno-sync');
           console.log('[APP] Background Sync に \'koeno-sync\' タグを登録しました。');
-          setStatusMessage('オフラインのため同期をスケジュールしました。');
+          setStatus('オフラインのため同期をスケジュールしました。', 'info');
         } else {
           console.error('[APP] registration.sync が未定義です！');
-          setStatusMessage('エラー: バックグラウンド同期APIが利用できません。');
+          setStatus('エラー: バックグラウンド同期APIが利用できません。', 'error');
         }
       }
     } catch (err) {
@@ -117,9 +159,9 @@ export const RecordPage = () => {
       console.error('[APP] handleLock 処理全体でエラーが発生:', err);
       if (err instanceof Error) {
         // (processSyncQueue_Foreground が throw したエラーもここでキャッチ)
-        setStatusMessage(`エラー: 同期処理の登録または実行に失敗しました: ${err.message}`);
+        setStatus(`エラー: 同期処理の登録または実行に失敗しました: ${err.message}`, 'error');
       } else {
-        setStatusMessage(`エラー: 同期処理の登録または実行に失敗しました: ${String(err)}`);
+        setStatus(`エラー: 同期処理の登録または実行に失敗しました: ${String(err)}`, 'error');
       }
     }
 
@@ -130,7 +172,7 @@ export const RecordPage = () => {
 
   // ★★★ 録音開始 ★★★
   const startRecording = async () => {
-    setStatusMessage('録音準備中...');
+    setStatus('録音準備中...', 'info');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const options = { mimeType: 'audio/webm' };
@@ -143,12 +185,12 @@ export const RecordPage = () => {
       };
 
       recorder.onstop = async () => {
-        setStatusMessage('保存処理中...');
+        setStatus('保存処理中...', 'info');
         const audioBlob = new Blob(audioChunksRef.current, { type: options.mimeType });
         const currentCaregiverId = auth.caregiverId;
 
         if (!currentCaregiverId) {
-          setStatusMessage('エラー: セッションが切れました。ロックして再認証してください。');
+          setStatus('エラー: セッションが切れました。ロックして再認証してください。', 'error');
           return;
         }
 
@@ -160,11 +202,11 @@ export const RecordPage = () => {
             upload_status: 'pending',
             created_at: new Date(),
           });
-          setStatusMessage(`ローカル保存成功 (ID: ${currentCaregiverId})。データは同期待ちです。`);
+          setStatus(`ローカル保存成功。データは同期待ちです。`, 'success');
           setMemo('');
         } catch (dbError) {
           console.error('IndexedDB 保存エラー:', dbError);
-          setStatusMessage(`ローカルDBへの保存に失敗しました: ${String(dbError)}`);
+          setStatus(`ローカルDBへの保存に失敗しました: ${String(dbError)}`, 'error');
         }
         
         stream.getTracks().forEach(track => track.stop());
@@ -172,14 +214,14 @@ export const RecordPage = () => {
 
       recorder.start();
       setIsRecording(true);
-      setStatusMessage('録音中...');
+      setStatus('録音中...', 'info');
     } catch (err) {
       console.error('マイクアクセスエラー:', err);
       // (ts(18046) 対策)
       if (err instanceof Error) {
-        setStatusMessage(`エラー: マイクへのアクセスが許可されていません: ${err.message}`);
+        setStatus(`エラー: マイクへのアクセスが許可されていません: ${err.message}`, 'error');
       } else {
-        setStatusMessage('エラー: マイクへのアクセスが許可されていません。');
+        setStatus('エラー: マイクへのアクセスが許可されていません。', 'error');
       }
     }
   };
@@ -196,28 +238,98 @@ export const RecordPage = () => {
 
   // --- (JSX) ---
   return (
-    <div style={{ padding: '20px' }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h1 style={{ fontSize: '1.5em' }}>{displayName} の記録中</h1>
-        <button onClick={handleLock} style={{ color: 'red', padding: '8px' }} disabled={isRecording}>
-          ロック (＆ 同期実行)
-        </button>
-      </header>
+    // ★★★ Task 2.2: MUI化 ★★★
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       
-      {isRecording && <p style={{ color: 'orange' }}>録音中はロックできません</p>}
-
-      <section style={{ marginBottom: '20px' }}>
-        {!isRecording ? (
-          <button onClick={startRecording} style={{ padding: '15px', fontSize: '1.2em', width: '100%' }}>🎤 録音開始</button>
-        ) : (
-          <button onClick={stopRecording} style={{ padding: '15px', fontSize: '1.2em', width: '100%', color: 'red', borderColor: 'red' }}>■ 録音停止 ＆ 保存</button>
+      {/* --- 1. ヘッダー --- */}
+      <AppBar position="static">
+        <Toolbar>
+          <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+            {displayName} の記録中
+          </Typography>
+          <Button 
+            color="inherit" 
+            onClick={handleLock} 
+            disabled={isRecording}
+            startIcon={<LockIcon />}
+          >
+            ロック (＆ 同期)
+          </Button>
+        </Toolbar>
+      </AppBar>
+      
+      {/* --- 2. メインコンテンツ --- */}
+      <Container maxWidth="md" sx={{ flexGrow: 1, py: 3, display: 'flex', flexDirection: 'column' }}>
+        
+        {isRecording && (
+          <Alert severity="warning" icon={<WarningIcon />} sx={{ mb: 2 }}>
+            録音中はロックできません
+          </Alert>
         )}
-      </section>
-      <section>
-        <label htmlFor="memo"><h3>関連メモ</h3></label>
-        <textarea id="memo" value={memo} onChange={(e) => setMemo(e.target.value)} rows={5} style={{ width: '100%', fontSize: '1em', padding: '10px' }} placeholder="録音内容に関するメモを入力..." disabled={isRecording} />
-      </section>
-      {statusMessage && (<p style={{ color: 'green', marginTop: '20px', textAlign: 'center' }}>{statusMessage}</p>)}
-    </div>
+
+        {/* --- 録音ボタン --- */}
+        <Box sx={{ mb: 3 }}>
+          {!isRecording ? (
+            <Button 
+              onClick={startRecording} 
+              variant="contained" 
+              color="primary"
+              startIcon={<MicIcon />}
+              sx={{ width: '100%', height: '80px', fontSize: '1.2em' }}
+            >
+              録音開始
+            </Button>
+          ) : (
+            <Button 
+              onClick={stopRecording} 
+              variant="contained" 
+              color="error"
+              startIcon={<StopIcon />}
+              sx={{ width: '100%', height: '80px', fontSize: '1.2em' }}
+            >
+              録音停止 ＆ 保存
+            </Button>
+          )}
+        </Box>
+        
+        {/* --- メモ帳 --- */}
+        <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
+          <Typography variant="h6" component="label" htmlFor="memo" gutterBottom>
+            関連メモ
+          </Typography>
+          <TextField 
+            id="memo" 
+            value={memo} 
+            onChange={(e) => setMemo(e.target.value)} 
+            multiline
+            rows={5} // (デフォルトの行数)
+            placeholder="録音内容に関するメモを入力..." 
+            disabled={isRecording}
+            sx={{ 
+              width: '100%', 
+              flexGrow: 1, // 残りの高さを埋める
+              '& .MuiInputBase-root': {
+                 height: '100%' // TextFieldの高さをBoxに合わせる
+              },
+              '& .MuiInputBase-input': {
+                 height: '100% !important' // 入力エリアの高さを強制
+              }
+            }}
+          />
+        </Box>
+      </Container>
+      
+      {/* --- 3. ステータス通知 (Snackbar) --- */}
+      <Snackbar 
+        open={isStatusOpen} 
+        autoHideDuration={6000} 
+        onClose={closeStatus}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={closeStatus} severity={statusSeverity} sx={{ width: '100%' }}>
+          {statusMessage}
+        </Alert>
+      </Snackbar>
+    </Box>
   );
 };

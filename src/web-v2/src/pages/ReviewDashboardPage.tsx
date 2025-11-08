@@ -1,7 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link as RouterLink } from 'react-router-dom'; // (RouterLinkとしてインポート)
 import { db, type LocalRecording } from '../db'; // (import type)
+
+// ★★★ Task 2.2: MUIコンポーネントをインポート ★★★
+import {
+  Container,
+  Box,
+  Typography,
+  Button,
+  AppBar,
+  Toolbar,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  CircularProgress,
+  Alert,
+  Chip
+} from '@mui/material';
+import { AdminPanelSettings as AdminIcon } from '@mui/icons-material'; // アイコン
 
 // main.py の RecordSummary に合わせた型定義
 interface CompletedRecord {
@@ -15,6 +36,7 @@ interface CompletedRecord {
 
 /**
  * Task 6.2: 記録一覧 (ダッシュボード)
+ * Task 2.2: MUI化
  */
 export const ReviewDashboardPage = () => {
   const auth = useAuth();
@@ -71,48 +93,98 @@ export const ReviewDashboardPage = () => {
   };
 
   return (
-    <div style={{ padding: '20px', maxWidth: '1024px', margin: '0 auto' }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1>記録レビュー ({auth.caregiverId} さん)</h1>
-        <button onClick={handleLogout} style={{ color: 'red' }}>ログアウト</button>
-      </header>
+    // ★★★ Task 2.2: MUI化 ★★★
+    <Box sx={{ flexGrow: 1 }}>
+      {/* --- 1. ヘッダー --- */}
+      <AppBar position="static">
+        <Toolbar>
+          <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+            記録レビュー ({auth.caregiverId} さん)
+          </Typography>
+          
+          {/* ★ Task 1.3 への導線 */}
+          <Button
+            color="inherit"
+            component={RouterLink}
+            to="/review/admin/users"
+            startIcon={<AdminIcon />}
+            sx={{ mr: 2 }}
+          >
+            ID管理
+          </Button>
 
-      {loading && <p>読み込み中...</p>}
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-      
-      <table style={{ width: '100%', marginTop: '20px', borderCollapse: 'collapse' }}>
-        <thead>
-          <tr style={{ borderBottom: '1px solid #555' }}>
-            <th style={{ padding: '8px', textAlign: 'left' }}>録音ID</th>
-            <th style={{ padding: '8px', textAlign: 'left' }}>日時</th>
-            <th style={{ padding: '8px', textAlign: 'left' }}>メモ</th>
-            <th style={{ padding: '8px', textAlign: 'left' }}>ステータス</th>
-            <th style={{ padding: '8px', textAlign: 'left' }}>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {records.map(record => (
-            <tr key={record.recording_id} style={{ borderBottom: '1px solid #333' }}>
-              <td style={{ padding: '8px' }}>{record.recording_id}</td>
-              <td style={{ padding: '8px' }}>{new Date(record.created_at).toLocaleString('ja-JP')}</td>
-              <td style={{ padding: '8px', maxWidth: '300px', whiteSpace: 'pre-wrap' }}>{record.memo_text}</td>
-              <td style={{ padding: '8px', color: 'green' }}>{record.ai_status}</td>
-              <td style={{ padding: '8px' }}>
-                
-                {/* (バグ修正済み: Link に state を追加) */}
-                <Link 
-                  to={`/review/detail/${record.recording_id}`}
-                  state={{ recordData: record }} 
-                >
-                  <button>レビュー・修正</button>
-                </Link>
+          <Button color="inherit" onClick={handleLogout}>
+            ログアウト
+          </Button>
+        </Toolbar>
+      </AppBar>
 
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      
-    </div>
+      {/* --- 2. メインコンテンツ --- */}
+      <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+        
+        {loading && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', my: 4 }}>
+            <CircularProgress />
+          </Box>
+        )}
+        
+        {error && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {error}
+          </Alert>
+        )}
+        
+        {!loading && !error && (
+          <TableContainer component={Paper}>
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableCell>録音ID</TableCell>
+                  <TableCell>日時</TableCell>
+                  <TableCell>メモ</TableCell>
+                  <TableCell>ステータス</TableCell>
+                  <TableCell>操作</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {records.map(record => (
+                  <TableRow 
+                    key={record.recording_id}
+                    hover // マウスオーバーで色変更
+                  >
+                    <TableCell>{record.recording_id}</TableCell>
+                    <TableCell>{new Date(record.created_at).toLocaleString('ja-JP')}</TableCell>
+                    <TableCell sx={{ maxWidth: '300px' }}>
+                      {record.memo_text || '(メモなし)'}
+                    </TableCell>
+                    <TableCell>
+                      <Chip label={record.ai_status} color="success" size="small" />
+                    </TableCell>
+                    <TableCell>
+                      {/* (バグ修正済み: Link に state を追加) */}
+                      <Button
+                        variant="contained"
+                        component={RouterLink}
+                        to={`/review/detail/${record.recording_id}`}
+                        state={{ recordData: record }} 
+                      >
+                        レビュー・修正
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+        
+        {!loading && records.length === 0 && (
+          <Typography sx={{ mt: 4, textAlign: 'center' }}>
+            表示する完了済みレコードはありません。
+          </Typography>
+        )}
+
+      </Container>
+    </Box>
   );
 };

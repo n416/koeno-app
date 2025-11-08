@@ -2,6 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
+// ★★★ Task 2.2: MUIコンポーネントをインポート ★★★
+import {
+  Container,
+  Box,
+  Typography,
+  Button,
+  TextField,
+  Alert,
+  CircularProgress
+} from '@mui/material';
+import { Nfc as NfcIcon, Pin as PinIcon } from '@mui/icons-material'; // アイコン
+
 // .env から API のベース URL を取得 ( "/api" または undefined が入る)
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 // ★ 修正: 相対パス (プロキシ 経由) にする
@@ -16,7 +28,7 @@ declare global {
 
 export const AuthPage = () => {
   const [pin, setPin] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState<string | null>(null); // (エラーメッセージ用にstring型に変更)
   const [isNfcAvailable, setIsNfcAvailable] = useState(false);
   
   // 'nfc' | 'pin'
@@ -55,12 +67,13 @@ export const AuthPage = () => {
 
       if (response.ok) {
         // ★ API認証成功
-        setError('');
+        setError(null); // エラーをクリア
         auth.login(id);
         navigate('/record'); // 認証成功
       } else {
         // ★ API認証失敗 (401 Unauthorized など)
-        setError('認証に失敗しました。IDが正しくありません。');
+        const errMsg = await response.text();
+        setError(errMsg || '認証に失敗しました。IDが正しくありません。');
         setPin(''); // PIN入力の場合、クリアする
       }
     } catch (err) {
@@ -119,7 +132,8 @@ export const AuthPage = () => {
   };
 
   // (B) PIN (iPhone / フォールバック)
-  const handlePinLogin = async () => {
+  const handlePinLogin = async (e: React.FormEvent) => {
+    e.preventDefault(); // フォーム送信によるリロードを防ぐ
     if (pin.length > 0) {
       await attemptLogin(pin); // 認証を実行
     } else {
@@ -128,48 +142,101 @@ export const AuthPage = () => {
   };
 
   /**
-   * JSX (Task 7.2 で修正済み)
+   * JSX (Task 2.2: MUI化)
    */
   return (
-    <div>
-      <h1>KOENO-APP 認証</h1>
-      {error && <p style={{ color: 'red' }}>{error}</p>}
+    <Container maxWidth="xs"> {/* スマホ画面なので xs (extra-small) を指定 */}
+      <Box
+        sx={{
+          marginTop: 8,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          textAlign: 'center',
+        }}
+      >
+        <Typography variant="h4" component="h1" gutterBottom>
+          KOENO-APP 認証
+        </Typography>
+        
+        {/* --- エラー表示エリア --- */}
+        {error && (
+          <Alert severity={loading ? "info" : "error"} sx={{ width: '100%', mb: 2 }}>
+            {error}
+          </Alert>
+        )}
+        {loading && authMode === 'nfc' && <CircularProgress sx={{ mb: 2 }} />}
+
+
+        {/* --- (A) NFC認証モード --- */}
+        {isNfcAvailable && authMode === 'nfc' ? (
+          <Box sx={{ width: '100%', mt: 2 }}>
+            <Typography variant="h6" gutterBottom>ICカードでアンロック</Typography>
+            <Button 
+              onClick={handleNfcScan} 
+              disabled={loading} 
+              variant="contained"
+              size="large"
+              startIcon={<NfcIcon />}
+              sx={{ width: '100%', height: '80px', fontSize: '1.2em' }}
+            >
+              ICカードのスキャンを開始
+            </Button>
+            
+            <Button 
+              onClick={() => setAuthMode('pin')} 
+              disabled={loading} 
+              variant="text"
+              sx={{ mt: 3 }}
+            >
+              PINコードで認証する
+            </Button>
+          </Box>
+        
+        ) : (
       
-      {isNfcAvailable && authMode === 'nfc' ? (
-        <section>
-          <h2>ICカードでアンロック</h2>
-          <button onClick={handleNfcScan} disabled={loading} style={{ padding: '20px', fontSize: '1.2em' }}>
-            {loading ? 'スキャン中...' : 'ICカードのスキャンを開始'}
-          </button>
-          
-          <button onClick={() => setAuthMode('pin')} disabled={loading} style={{ marginTop: '20px', background: 'transparent', border: 'none', color: 'cyan', cursor: 'pointer' }}>
-            PINコードで認証する
-          </button>
-        </section>
-      
-      ) : (
-      
-        <section>
-          <h2>PINコードでアンロック</h2>
-          <input
+        /* --- (B) PIN認証モード --- */
+        <Box 
+          component="form" 
+          onSubmit={handlePinLogin} 
+          sx={{ width: '100%', mt: 2 }}
+        >
+          <Typography variant="h6" gutterBottom>PINコードでアンロック</Typography>
+          <TextField
             type="password"
+            label="PINコード"
             value={pin}
             onChange={(e) => setPin(e.target.value)}
-            maxLength={10}
-            style={{ fontSize: '1.5em', width: '150px', marginRight: '10px' }}
+            inputProps={{ maxLength: 10 }}
+            sx={{ width: '100%', mb: 2 }}
             disabled={loading}
+            autoFocus
           />
-          <button onClick={handlePinLogin} disabled={loading} style={{ padding: '10px' }}>
+          <Button 
+            type="submit"
+            onClick={handlePinLogin} 
+            disabled={loading} 
+            variant="contained"
+            size="large"
+            startIcon={loading ? <CircularProgress size={24} /> : <PinIcon />}
+            sx={{ width: '100%', height: '56px' }}
+          >
             {loading ? '認証中...' : '認証'}
-          </button>
+          </Button>
 
           {isNfcAvailable && (
-            <button onClick={() => setAuthMode('nfc')} disabled={loading} style={{ display: 'block', margin: '20px auto', background: 'transparent', border: 'none', color: 'cyan', cursor: 'pointer' }}>
+            <Button 
+              onClick={() => setAuthMode('nfc')} 
+              disabled={loading} 
+              variant="text"
+              sx={{ mt: 3 }}
+            >
               ICカードで認証する
-            </button>
+            </Button>
           )}
-        </section>
+        </Box>
       )}
-    </div>
+      </Box>
+    </Container>
   );
 };

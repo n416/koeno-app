@@ -30,8 +30,13 @@ caregivers = sqlalchemy.Table(
     sqlalchemy.Column("caregiver_id", sqlalchemy.String, primary_key=True),
     sqlalchemy.Column("name", sqlalchemy.String, nullable=True), # (将来的な拡張用)
     
-    # ★★★ 修正: utcnow() -> now(datetime.UTC) ★★★
-    sqlalchemy.Column("created_at", sqlalchemy.DateTime, default=datetime.datetime.now(datetime.UTC)),
+    # ★★★ v1.8 エラー修正: nullable=True を追加 ★★★
+    sqlalchemy.Column(
+        "created_at", 
+        sqlalchemy.DateTime, 
+        default=datetime.datetime.now(datetime.UTC), 
+        nullable=True # (古いデータがNULLでも許容)
+    ),
 )
 
 # Task 1: recordings テーブル
@@ -75,6 +80,19 @@ class RecordSummary(BaseModel):
 class AuthRequest(BaseModel):
     caregiver_id: str
 
+# ★★★ Task 1.2: /admin/caregivers (POST) リクエストのボディ ★★★
+class CaregiverInput(BaseModel):
+    caregiver_id: str
+    name: Optional[str] = None
+
+# ★★★ Task 1.2: /admin/caregivers (GET) レスポンスの形式 ★★★
+class CaregiverInfo(BaseModel):
+    caregiver_id: str
+    name: Optional[str]
+    # ★★★ v1.8 エラー修正: Optional[datetime.datetime] に変更 ★★★
+    created_at: Optional[datetime.datetime]
+
+
 # -----------------------------------------------------------
 # 4. FastAPI アプリケーションの定義
 # -----------------------------------------------------------
@@ -103,26 +121,10 @@ async def startup():
     await database.connect()
     print("データベースに接続し、テーブル定義を確認しました。")
 
-    # Task 7.1 (テスト用IDの登録)
-    try:
-        # 既に存在する場合は無視 (IGNORE) する
-        query_pin_user = caregivers.insert().prefix_with("OR IGNORE").values(
-            caregiver_id="pin-user", name="PIN User"
-        )
-        query_1234 = caregivers.insert().prefix_with("OR IGNORE").values(
-            caregiver_id="1234", name="PIN 1234"
-        )
-        query_nfc_test = caregivers.insert().prefix_with("OR IGNORE").values(
-            caregiver_id="3f:12:53:0d", name="Test NFC Card"
-        )
-        
-        await database.execute(query_pin_user)
-        await database.execute(query_1234)
-        await database.execute(query_nfc_test)
-        
-        print("テスト用 Caregiver ID ('pin-user', '1234', '3f:12:53:0d') を確認・登録しました。")
-    except Exception as e:
-        print(f"警告: テスト用IDの登録に失敗しました: {e}")
+    # ★★★ Task 1.1: ハードコードされたテストID登録ロジックを削除 ★★★
+    # (ここにあった 'pin-user', '1234', '3f:12:53:0d' の登録処理を削除)
+    print("（Task 1.1: ハードコードされたテストIDの登録は行われません）")
+
 
 @app.on_event("shutdown")
 async def shutdown():
@@ -149,25 +151,25 @@ async def upload_recording(
     os.makedirs(upload_dir, exist_ok=True)
     
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-# ★★★ ここから修正 ★★★
-    # caregiver_id に含まれるコロン(:)やスラッシュ(/)などをアンダースコア(_)に置換
-    safe_caregiver_id = caregiver_id.replace(":", "_").replace("/", "_").replace("\\", "_")
     
-    # (念のため filename もサニタイズ)
+    # (v1.7 修正: ファイル名のコロンを置換)
+    safe_caregiver_id = caregiver_id.replace(":", "_").replace("/", "_").replace("\\", "_")
     safe_filename = audio_blob.filename.replace(":", "_").replace("/", "_").replace("\\", "_")
     
-    file_path = os.path.join(upload_dir, f"{safe_caregiver_id}_{timestamp}_{safe_filename}")
-    # ★★★ ここまで修正 ★★★
-    
+    # (v1.7 修正: 絶対パスを使用)
+    relative_file_path = os.path.join(upload_dir, f"{safe_caregiver_id}_{timestamp}_{safe_filename}")
+    absolute_file_path = os.path.abspath(relative_file_path)
+
     try:
-        with open(file_path, "wb") as f:
+        with open(absolute_file_path, "wb") as f:
             f.write(await audio_blob.read())
     except Exception as e:
+        print(f"!!! ファイル保存エラー: {e} (Path: {absolute_file_path})") 
         raise HTTPException(status_code=500, detail=f"音声ファイルの保存に失敗しました: {e}")
 
     query = recordings.insert().values(
         caregiver_id=caregiver_id,
-        audio_file_path=file_path,
+        audio_file_path=absolute_file_path, # (絶対パスを保存)
         memo_text=memo_text,
         ai_status="pending",
         transcription_result=None,
@@ -185,7 +187,7 @@ async def upload_recording(
             "message": "録音データを受け付けました。AI処理待ちです。"
         }
     except Exception as e:
-        print(f"DB INSERT エラー: {e}")
+        print(f"!!! DB INSERT エラー: {e}")
         raise HTTPException(status_code=500, detail=f"データベースへの保存に失敗しました: {e}")
 
 
@@ -229,7 +231,76 @@ async def authenticate_caregiver(
         raise HTTPException(status_code=401, detail="Caregiver ID not found")
 
 # -----------------------------------------------------------
-# 7. サーバーの起動 (開発用)
+# 7. ★★★ Task 1.2: 管理者用CRUDエンドポイント ★★★
+# -----------------------------------------------------------
+
+@app.get("/admin/caregivers", response_model=List[CaregiverInfo])
+async def admin_get_caregivers():
+    """ [Task 1.2] 介護士IDマスタを一覧取得 """
+    try:
+        query = caregivers.select().order_by(caregivers.c.created_at.desc())
+        all_caregivers = await database.fetch_all(query)
+        return all_caregivers
+    except Exception as e:
+        print(f"管理者API (GET) エラー: {e}")
+        raise HTTPException(status_code=500, detail=f"ID一覧の取得に失敗しました: {e}")
+
+@app.post("/admin/caregivers", response_model=CaregiverInfo)
+async def admin_create_caregiver(
+    caregiver_input: CaregiverInput = Body(...)
+):
+    """ [Task 1.2] 新しい介護士IDを登録 """
+    try:
+        # ★★★ v1.8 エラー修正: datetime.datetime.now(datetime.UTC) を明示的に指定 ★★★
+        query = caregivers.insert().values(
+            caregiver_id=caregiver_input.caregiver_id,
+            name=caregiver_input.name,
+            created_at=datetime.datetime.now(datetime.UTC) # ← 明示的に指定
+        )
+        await database.execute(query)
+        
+        # 登録結果を再取得して返す
+        query_result = caregivers.select().where(caregivers.c.caregiver_id == caregiver_input.caregiver_id)
+        created_record = await database.fetch_one(query_result)
+        
+        return created_record
+        
+    except sqlalchemy.exc.IntegrityError:
+        # (主キー重複エラー)
+        print(f"管理者API (POST) エラー: ID {caregiver_input.caregiver_id} は既に存在します。")
+        raise HTTPException(status_code=409, detail=f"ID '{caregiver_input.caregiver_id}' は既に存在します。")
+    except Exception as e:
+        print(f"管理者API (POST) エラー: {e}")
+        raise HTTPException(status_code=500, detail=f"IDの登録に失敗しました: {e}")
+
+@app.delete("/admin/caregivers/{caregiver_id}", status_code=204)
+async def admin_delete_caregiver(
+    caregiver_id: str
+):
+    """ [Task 1.2] 介護士IDを削除 """
+    try:
+        # 削除対象が存在するか確認
+        query_check = caregivers.select().where(caregivers.c.caregiver_id == caregiver_id)
+        existing = await database.fetch_one(query_check)
+        
+        if not existing:
+            print(f"管理者API (DELETE) エラー: ID {caregiver_id} が見つかりません。")
+            raise HTTPException(status_code=404, detail=f"ID '{caregiver_id}' が見つかりません。")
+
+        # 削除実行
+        query = caregivers.delete().where(caregivers.c.caregiver_id == caregiver_id)
+        await database.execute(query)
+        
+        print(f"管理者API (DELETE): ID {caregiver_id} を削除しました。")
+        return # (204 No Content が自動で返る)
+
+    except Exception as e:
+        print(f"管理者API (DELETE) エラー: {e}")
+        raise HTTPException(status_code=500, detail=f"IDの削除に失敗しました: {e}")
+
+
+# -----------------------------------------------------------
+# 8. サーバーの起動 (開発用)
 # -----------------------------------------------------------
 if __name__ == "__main__":
     print("開発サーバーを http://127.0.0.1:8000 で起動します")
@@ -240,6 +311,6 @@ if __name__ == "__main__":
         host="127.0.0.1", 
         port=8000,
         proxy_headers=True, # ngrok が追加する X-Forwarded-Host などを信頼する
-        forwarded_allow_ips="*" # すべてのIPからのプロキシを許可（開発用）
-        # reload=True # (お好みで: コード変更時に自動リロード)
+        forwarded_allow_ips="*", # すべてのIPからのプロキシを許可（開発用）
+        reload=True # (お好みで: コード変更時に自動リロード)
     )
