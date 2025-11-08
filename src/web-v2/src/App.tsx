@@ -10,6 +10,9 @@ import { ReviewDetailPage } from './pages/ReviewDetailPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
 import { AdminProtectedRoute } from './components/AdminProtectedRoute';
 
+// ★★★ GM指摘修正: Kiosk専用の保護ルートをインポート ★★★
+import { KioskProtectedRoute } from './components/KioskProtectedRoute';
+
 // ★★★ Task 9.1 (GM指示): テーマと動的切り替えフックをインポート ★★★
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
@@ -31,6 +34,7 @@ function App() {
       <Routes>
         {/* --- Task 2/3: PWA (スマホ録音) 画面 --- */}
         <Route path="/" element={<AuthPage />} />
+        {/* (PWAは従来の ProtectedRoute を使用) */}
         <Route element={<ProtectedRoute />}>
           <Route path="/record" element={<RecordPage />} />
         </Route>
@@ -40,8 +44,9 @@ function App() {
         {/* PC版NFC認証 */}
         <Route path="/review" element={<KioskAuthPage />} />
         
-        {/* PC版 (ログイン済み) */}
-        <Route element={<ProtectedRoute />}>
+        {/* ★★★ GM指摘修正: PC版 (ログイン済み) ★★★ */}
+        {/* (ProtectedRoute を KioskProtectedRoute に変更) */}
+        <Route element={<KioskProtectedRoute />}>
           {/* 記録一覧 */}
           <Route path="/review/dashboard" element={<ReviewDashboardPage />} />
           
@@ -49,6 +54,7 @@ function App() {
           <Route path="/review/detail/:id" element={<ReviewDetailPage />} />
 
           {/* ★★★ Task 9.2: ID管理ページを AdminProtectedRoute で保護 ★★★ */}
+          {/* (AdminProtectedRoute は KioskProtectedRoute の *内側* にネスト) */}
           <Route element={<AdminProtectedRoute />}>
             <Route path="/review/admin/users" element={<AdminUsersPage />} />
           </Route>
