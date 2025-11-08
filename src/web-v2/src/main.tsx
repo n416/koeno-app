@@ -7,16 +7,8 @@ import './index.css';
 
 import { registerSW } from 'virtual:pwa-register';
 
-// ★★★ Task 2.1: MUIのテーマとベースラインをインポート ★★★
-import { ThemeProvider, createTheme } from '@mui/material/styles';
-import CssBaseline from '@mui/material/CssBaseline';
-
-// ★★★ Task 2.1: ダークテーマを定義 ★★★
-const darkTheme = createTheme({
-  palette: {
-    mode: 'dark',
-  },
-});
+// ★★★ Task 9.1 (GM指示): ThemeProvider と CssBaseline は App.tsx に移動 ★★★
+// (ここでは import も削除)
 
 // (SW登録コードは変更なし)
 console.log('[APP] registerSW を呼び出します...');
@@ -32,14 +24,11 @@ registerSW({
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    {/* ★★★ Task 2.1: アプリ全体をラップする ★★★ */}
-    <ThemeProvider theme={darkTheme}>
-      <CssBaseline /> {/* CSSリセット */}
-      <BrowserRouter>
-        <AuthProvider>
-          <App />
-        </AuthProvider>
-      </BrowserRouter>
-    </ThemeProvider>
+    {/* ★★★ ThemeProvider/CssBaseline は App.tsx に移動 ★★★ */}
+    <BrowserRouter>
+      <AuthProvider>
+        <App />
+      </AuthProvider>
+    </BrowserRouter>
   </React.StrictMode>,
 );

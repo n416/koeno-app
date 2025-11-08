@@ -15,16 +15,17 @@ import {
   IconButton,
   CircularProgress,
   Alert,
-  Link as MuiLink // (react-router-dom の Link と区別)
+  Link as MuiLink
 } from '@mui/material';
 import { Delete as DeleteIcon } from '@mui/icons-material';
-import { Link as RouterLink } from 'react-router-dom'; // (画面遷移用)
+import { Link as RouterLink } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 
 // APIから返される Caregiver の型 (main.py の CaregiverInfo に合わせる)
 interface Caregiver {
   caregiver_id: string;
   name: string | null;
-  created_at: string;
+  created_at: string | null; // (v1.8修正: null許容)
 }
 
 // .env から API のベース URL を取得
@@ -43,16 +44,36 @@ export const AdminUsersPage = () => {
   const [newName, setNewName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // ★★★ Task 8.1 (フロント対応): 認証フックを使用 ★★★
+  const auth = useAuth();
+  const callerId = auth.caregiverId; // ログイン中の管理者ID
+
   const API_URL = `${API_BASE_URL}/admin/caregivers`; // -> /api/admin/caregivers
 
   // 1. (GET) 介護士一覧の取得
   const fetchCaregivers = async () => {
     setLoading(true);
     setError(null);
+
+    // ★★★ Task 8.1 (フロント対応): 認証チェック ★★★
+    if (!callerId) {
+      setError("認証情報が見つかりません。");
+      setLoading(false);
+      return;
+    }
+
     try {
-      const response = await fetch(API_URL);
+      // ★★★ Task 8.1 (フロント対応): X-Caller-ID ヘッダーを追加 ★★★
+      const response = await fetch(API_URL, {
+        method: 'GET',
+        headers: {
+          'X-Caller-ID': callerId,
+        }
+      });
       if (!response.ok) {
-        throw new Error(`APIエラー: ${response.status} ${response.statusText}`);
+        // (403 Forbidden が返ることを期待)
+        const errMsg = await response.text();
+        throw new Error(errMsg || `APIエラー: ${response.status}`);
       }
       const data: Caregiver[] = await response.json();
       setCaregivers(data);
@@ -68,9 +89,14 @@ export const AdminUsersPage = () => {
 
   // 2. (POST) 新規登録
   const handleAdd = async (e: FormEvent) => {
-    e.preventDefault(); // フォームの標準送信を防止
+    e.preventDefault();
     if (!newId) {
       setError('Caregiver ID は必須です。');
+      return;
+    }
+    // ★★★ Task 8.1 (フロント対応): 認証チェック ★★★
+    if (!callerId) {
+      setError("認証情報が見つかりません。");
       return;
     }
 
@@ -78,9 +104,13 @@ export const AdminUsersPage = () => {
     setError(null);
 
     try {
+      // ★★★ Task 8.1 (フロント対応): X-Caller-ID ヘッダーを追加 ★★★
       const response = await fetch(API_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Caller-ID': callerId,
+        },
         body: JSON.stringify({
           caregiver_id: newId,
           name: newName || null,
@@ -89,17 +119,15 @@ export const AdminUsersPage = () => {
 
       if (!response.ok) {
         const errMsg = await response.text();
-        // (main.py で 409 Conflict を設定)
         if (response.status === 409) {
           throw new Error(errMsg || 'IDが重複しています。');
         }
+        // (403 Forbidden が返ることを期待)
         throw new Error(errMsg || `登録エラー: ${response.status}`);
       }
 
       const newData: Caregiver = await response.json();
-      // 成功したらリストの先頭に追加 (再フェッチはしない)
       setCaregivers([newData, ...caregivers]);
-      // フォームをクリア
       setNewId('');
       setNewName('');
 
@@ -118,19 +146,29 @@ export const AdminUsersPage = () => {
     if (!window.confirm(`ID: ${idToDelete} を本当に削除しますか？`)) {
       return;
     }
-    
+
+    // ★★★ Task 8.1 (フロント対応): 認証チェック ★★★
+    if (!callerId) {
+      setError("認証情報が見つかりません。");
+      return;
+    }
+
     setError(null);
     try {
+      // ★★★ Task 8.1 (フロント対応): X-Caller-ID ヘッダーを追加 ★★★
       const response = await fetch(`${API_URL}/${idToDelete}`, {
         method: 'DELETE',
+        headers: {
+          'X-Caller-ID': callerId,
+        }
       });
 
       if (!response.ok) {
         const errMsg = await response.text();
+        // (403 Forbidden / 404 Not Found が返ることを期待)
         throw new Error(errMsg || `削除エラー: ${response.status}`);
       }
 
-      // 成功したらリストから削除 (再フェッチはしない)
       setCaregivers(caregivers.filter(c => c.caregiver_id !== idToDelete));
 
     } catch (err) {
@@ -145,7 +183,7 @@ export const AdminUsersPage = () => {
   // --- 初期読み込み ---
   useEffect(() => {
     fetchCaregivers();
-  }, []);
+  }, [callerId]); // ★ 依存配列に callerId を追加
 
   // --- JSX (MUI) ---
   return (
@@ -159,7 +197,8 @@ export const AdminUsersPage = () => {
         </MuiLink>
 
         {/* --- 1. 新規登録フォーム --- */}
-        <Paper sx={{ p: 2, mt: 2, mb: 4, backgroundColor: 'grey.900' }}>
+        {/* ★★★ 修正: backgroundColor: 'grey.900' を削除 ★★★ */}
+        <Paper sx={{ p: 2, mt: 2, mb: 4 }}>
           <Typography variant="h6">新規ID登録</Typography>
           <Box component="form" onSubmit={handleAdd} sx={{ display: 'flex', gap: 2, mt: 2, alignItems: 'center' }}>
             <TextField
@@ -169,6 +208,7 @@ export const AdminUsersPage = () => {
               required
               disabled={isSubmitting}
               sx={{ flexGrow: 1 }}
+              variant="outlined" // (明示)
             />
             <TextField
               label="名前 (任意)"
@@ -176,10 +216,11 @@ export const AdminUsersPage = () => {
               onChange={(e) => setNewName(e.target.value)}
               disabled={isSubmitting}
               sx={{ flexGrow: 1 }}
+              variant="outlined" // (明示)
             />
-            <Button 
-              type="submit" 
-              variant="contained" 
+            <Button
+              type="submit"
+              variant="contained"
               color="primary"
               disabled={isSubmitting}
               sx={{ height: '56px' }}
@@ -211,16 +252,22 @@ export const AdminUsersPage = () => {
               </TableHead>
               <TableBody>
                 {caregivers.map((c) => (
-                  <TableRow key={c.caregiver_id}>
+                  <TableRow
+                    key={c.caregiver_id}
+                    hover
+                  >
                     <TableCell component="th" scope="row">
                       {c.caregiver_id}
                     </TableCell>
                     <TableCell>{c.name || '(未設定)'}</TableCell>
-                    <TableCell>{new Date(c.created_at).toLocaleString('ja-JP')}</TableCell>
+                    {/* ★ v1.8 エラー修正: c.created_at が null の可能性に対応 */}
+                    <TableCell>
+                      {c.created_at ? new Date(c.created_at).toLocaleString('ja-JP') : '(日時不明)'}
+                    </TableCell>
                     <TableCell align="right">
-                      <IconButton 
-                        edge="end" 
-                        aria-label="delete" 
+                      <IconButton
+                        edge="end"
+                        aria-label="delete"
                         onClick={() => handleDelete(c.caregiver_id)}
                         color="error"
                       >

@@ -1,6 +1,7 @@
 import os
 import uvicorn
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Body
+# ★ Task 8.1: Depends, Header をインポート
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Body, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Optional
 import databases
@@ -38,6 +39,18 @@ caregivers = sqlalchemy.Table(
         nullable=True # (古いデータがNULLでも許容)
     ),
 )
+
+# ★★★ Task 8.1 【PO 1.1】: administrators テーブルの定義 ★★★
+administrators = sqlalchemy.Table(
+    "administrators",
+    metadata,
+    sqlalchemy.Column("admin_id", sqlalchemy.Integer, primary_key=True, autoincrement=True),
+    # (FK: caregivers.caregiver_id に連動)
+    sqlalchemy.Column("caregiver_id", sqlalchemy.String, sqlalchemy.ForeignKey("caregivers.caregiver_id"), unique=True),
+    sqlalchemy.Column("role", sqlalchemy.String, default="owner"), # (例: 'owner', 'manager')
+    sqlalchemy.Column("granted_at", sqlalchemy.DateTime, default=datetime.datetime.now(datetime.UTC))
+)
+
 
 # Task 1: recordings テーブル
 recordings = sqlalchemy.Table(
@@ -116,7 +129,8 @@ app.add_middleware(
 async def startup():
     """ サーバー起動時にDBテーブルを作成し、接続する """
     engine = sqlalchemy.create_engine(DATABASE_URL)
-    metadata.create_all(engine) # recordings と caregivers が作成される
+    # ★ (Task 8.1) administrators テーブルもここで作成される
+    metadata.create_all(engine) 
     
     await database.connect()
     print("データベースに接続し、テーブル定義を確認しました。")
@@ -133,7 +147,7 @@ async def shutdown():
     print("データベース接続を切断しました。")
 
 # -----------------------------------------------------------
-# 6. APIエンドポイント
+# 6. APIエンドポイント (一般ユーザー)
 # -----------------------------------------------------------
 
 @app.get("/")
@@ -231,11 +245,42 @@ async def authenticate_caregiver(
         raise HTTPException(status_code=401, detail="Caregiver ID not found")
 
 # -----------------------------------------------------------
-# 7. ★★★ Task 1.2: 管理者用CRUDエンドポイント ★★★
+# 7. ★★★ Task 8.1: 管理者用 認可Dependency ★★★
+# -----------------------------------------------------------
+
+async def verify_admin(x_caller_id: str = Header(None)):
+    """
+    [Task 8.1] API実行者が管理者テーブルに存在するか確認するDependency
+    (PO 1.2 の指示に基づき、X-Caller-ID ヘッダーで簡易的に実行者を特定)
+    """
+    if x_caller_id is None:
+        print("管理者API 認可エラー: X-Caller-ID ヘッダーがありません。")
+        raise HTTPException(status_code=401, detail="Unauthorized: X-Caller-ID header is missing")
+
+    try:
+        query = administrators.select().where(administrators.c.caregiver_id == x_caller_id)
+        result = await database.fetch_one(query)
+        
+        if not result:
+            print(f"管理者API 認可エラー: ID {x_caller_id} には管理者権限がありません。")
+            raise HTTPException(status_code=403, detail="Forbidden: User does not have admin privileges")
+        
+        # 権限があればIDを返す (API側では利用しないが、将来的な拡張用)
+        return x_caller_id 
+
+    except Exception as e:
+        print(f"管理者API 認可エラー (500): {e}")
+        raise HTTPException(status_code=500, detail=f"Authorization check failed: {e}")
+
+
+# -----------------------------------------------------------
+# 8. ★★★ Task 1.2 & 8.1: 管理者用CRUDエンドポイント (認可適用) ★★★
 # -----------------------------------------------------------
 
 @app.get("/admin/caregivers", response_model=List[CaregiverInfo])
-async def admin_get_caregivers():
+async def admin_get_caregivers(
+    admin_id: str = Depends(verify_admin) # ★ Task 8.1 適用
+):
     """ [Task 1.2] 介護士IDマスタを一覧取得 """
     try:
         query = caregivers.select().order_by(caregivers.c.created_at.desc())
@@ -247,7 +292,8 @@ async def admin_get_caregivers():
 
 @app.post("/admin/caregivers", response_model=CaregiverInfo)
 async def admin_create_caregiver(
-    caregiver_input: CaregiverInput = Body(...)
+    caregiver_input: CaregiverInput = Body(...),
+    admin_id: str = Depends(verify_admin) # ★ Task 8.1 適用
 ):
     """ [Task 1.2] 新しい介護士IDを登録 """
     try:
@@ -275,7 +321,8 @@ async def admin_create_caregiver(
 
 @app.delete("/admin/caregivers/{caregiver_id}", status_code=204)
 async def admin_delete_caregiver(
-    caregiver_id: str
+    caregiver_id: str,
+    admin_id: str = Depends(verify_admin) # ★ Task 8.1 適用
 ):
     """ [Task 1.2] 介護士IDを削除 """
     try:
@@ -300,7 +347,7 @@ async def admin_delete_caregiver(
 
 
 # -----------------------------------------------------------
-# 8. サーバーの起動 (開発用)
+# 9. サーバーの起動 (開発用)
 # -----------------------------------------------------------
 if __name__ == "__main__":
     print("開発サーバーを http://127.0.0.1:8000 で起動します")
@@ -311,6 +358,6 @@ if __name__ == "__main__":
         host="127.0.0.1", 
         port=8000,
         proxy_headers=True, # ngrok が追加する X-Forwarded-Host などを信頼する
-        forwarded_allow_ips="*", # すべてのIPからのプロキシを許可（開発用）
-        reload=True # (お好みで: コード変更時に自動リロード)
+        forwarded_allow_ips="*" # すべてのIPからのプロキシを許可（開発用）
+        # reload=True # (お好みで: コード変更時に自動リロード)
     )

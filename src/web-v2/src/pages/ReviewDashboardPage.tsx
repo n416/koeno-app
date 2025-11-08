@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+// ★★★ Task 9.2: useAuth をインポート ★★★
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, Link as RouterLink } from 'react-router-dom'; // (RouterLinkとしてインポート)
 import { db, type LocalRecording } from '../db'; // (import type)
@@ -24,21 +25,15 @@ import {
 } from '@mui/material';
 import { AdminPanelSettings as AdminIcon } from '@mui/icons-material'; // アイコン
 
-// main.py の RecordSummary に合わせた型定義
-interface CompletedRecord {
-  recording_id: number;
-  ai_status: string;
-  memo_text?: string;
-  transcription_result?: any; // JSON
-  summary_result?: string;
-  created_at: string; // (JSONはDate型をstringで返す)
-}
+// ( ... interface CompletedRecord ... )
 
 /**
  * Task 6.2: 記録一覧 (ダッシュボード)
  * Task 2.2: MUI化
+ * Task 9.2: 認可UI
  */
 export const ReviewDashboardPage = () => {
+  // ★★★ Task 9.2: 認証フックを使用 ★★★
   const auth = useAuth();
   const navigate = useNavigate();
   const [records, setRecords] = useState<CompletedRecord[]>([]);
@@ -57,6 +52,9 @@ export const ReviewDashboardPage = () => {
       return;
     }
     
+    // ★★★ Task 9.2: 画面表示時に管理者権限をチェック (ボタン表示のため) ★★★
+    auth.checkAdminStatus();
+
     // /api/my_records エンドポイントを呼び出す
     const fetchRecords = async () => {
       setLoading(true);
@@ -85,7 +83,9 @@ export const ReviewDashboardPage = () => {
     };
 
     fetchRecords();
-  }, [auth.caregiverId, navigate, API_URL]);
+    
+    // ★★★ Task 9.2: auth.caregiverId が変わるたびに再実行 ★★★
+  }, [auth, navigate, API_URL]); // (auth オブジェクト全体を依存配列に)
 
   const handleLogout = () => {
     auth.logout();
@@ -93,7 +93,6 @@ export const ReviewDashboardPage = () => {
   };
 
   return (
-    // ★★★ Task 2.2: MUI化 ★★★
     <Box sx={{ flexGrow: 1 }}>
       {/* --- 1. ヘッダー --- */}
       <AppBar position="static">
@@ -102,16 +101,18 @@ export const ReviewDashboardPage = () => {
             記録レビュー ({auth.caregiverId} さん)
           </Typography>
           
-          {/* ★ Task 1.3 への導線 */}
-          <Button
-            color="inherit"
-            component={RouterLink}
-            to="/review/admin/users"
-            startIcon={<AdminIcon />}
-            sx={{ mr: 2 }}
-          >
-            ID管理
-          </Button>
+          {/* ★★★ Task 9.2: auth.isAdmin が true の場合のみ表示 ★★★ */}
+          {auth.isAdmin && (
+            <Button
+              color="inherit"
+              component={RouterLink}
+              to="/review/admin/users"
+              startIcon={<AdminIcon />}
+              sx={{ mr: 2 }}
+            >
+              ID管理
+            </Button>
+          )}
 
           <Button color="inherit" onClick={handleLogout}>
             ログアウト
