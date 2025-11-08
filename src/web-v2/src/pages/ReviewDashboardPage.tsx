@@ -23,9 +23,10 @@ export const ReviewDashboardPage = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  // .env から API のベース URL を取得
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
-  const API_URL = `${API_BASE_URL}/my_records`;
+  // .env から API のベース URL を取得 ( "/api" または undefined が入る)
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+  // ★ 修正: 相対パス (プロキシ 経由) にする
+  const API_URL = `${API_BASE_URL}/my_records`; // -> /api/my_records
 
   useEffect(() => {
     if (!auth.caregiverId) {
@@ -34,7 +35,7 @@ export const ReviewDashboardPage = () => {
       return;
     }
     
-    // Task 1 で構築した /my_records エンドポイントを呼び出す
+    // /api/my_records エンドポイントを呼び出す
     const fetchRecords = async () => {
       setLoading(true);
       setError('');
@@ -43,7 +44,6 @@ export const ReviewDashboardPage = () => {
         
         if (response.ok) {
           const data: CompletedRecord[] = await response.json();
-          // Task 5 で処理された "completed" のものだけが表示されるはず
           setRecords(data);
         } else {
           const errMsg = await response.text();
@@ -51,15 +51,13 @@ export const ReviewDashboardPage = () => {
           setError(`APIエラー: ${response.status} ${response.statusText}`);
         }
       } catch (err) {
-        // ★★★ TSエラー (ts18046) 修正 ★★★
+        // (TSエラー修正済み)
         console.error("通信エラー詳細:", err);
-        // 'err' が 'unknown' 型のため、型ガードを行う
         if (err instanceof Error) {
           setError(`通信エラー: ${err.message}`);
         } else {
           setError(`通信エラー: 不明なエラーが発生しました (${String(err)})`);
         }
-        // ★★★ ここまで修正 ★★★
       }
       setLoading(false);
     };
@@ -101,7 +99,7 @@ export const ReviewDashboardPage = () => {
               <td style={{ padding: '8px', color: 'green' }}>{record.ai_status}</td>
               <td style={{ padding: '8px' }}>
                 
-                {/* (前回の修正: Link に state を追加) */}
+                {/* (バグ修正済み: Link に state を追加) */}
                 <Link 
                   to={`/review/detail/${record.recording_id}`}
                   state={{ recordData: record }} 

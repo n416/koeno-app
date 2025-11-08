@@ -2,21 +2,24 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
+// .env から API のベース URL を取得 ( "/api" または undefined が入る)
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+// ★ 修正: 相対パス (プロキシ 経由) にする
+const AUTH_URL = `${API_BASE_URL}/authenticate`; // -> /api/authenticate
+
 /**
- * Task 6.1: PC版 認証ページ (KioskAuthPage)
- * USB接続のNFCリーダー (キーボードエミュレート型) を想定。
- * 隠しInputでキー入力を受け付け、Enterキーで認証を試みる。
+ * Task 6.1 (Task 7.4 修正): PC版 認証ページ (KioskAuthPage)
+ * API認証を行うようロジックを修正
  */
 export const KioskAuthPage = () => {
   const [inputBuffer, setInputBuffer] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false); // ★ 認証中ローディング
   const auth = useAuth();
   const navigate = useNavigate();
   
-  // 常にフォーカスを当てるための隠しInput
   const hiddenInputRef = useRef<HTMLInputElement>(null);
 
-  // 画面がクリックされたら、常に隠しInputにフォーカスを戻す
   const focusInput = () => {
     if (hiddenInputRef.current) {
       hiddenInputRef.current.focus();
@@ -24,35 +27,67 @@ export const KioskAuthPage = () => {
   };
 
   useEffect(() => {
-    // コンポーネントマウント時にフォーカス
     focusInput();
   }, []);
 
-  // ★★★ 修正箇所 ★★★
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  /**
+   * 認証APIをコールするロジック (Task 7.4)
+   */
+  const handleKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
     // Enterキーが押された場合のみ処理
     if (e.key === 'Enter') {
-      const trimmedId = inputBuffer.trim(); // (inputBuffer は onChange でセットされている)
+      const trimmedId = inputBuffer.trim();
       
       if (trimmedId.length > 0) {
-        console.log(`[KioskAuth] ID取得: ${trimmedId}`);
-        setError('');
-        auth.login(trimmedId); // 取得したIDでログイン
-        navigate('/review/dashboard'); // ダッシュボードへ
+        
+        // ★ API認証処理
+        setLoading(true);
+        setError('認証中...');
+        
+        // (AUTH_URL が /api/authenticate になっている)
+        try {
+          const response = await fetch(AUTH_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ caregiver_id: trimmedId })
+          });
+
+          if (response.ok) {
+            // ★ API認証成功
+            console.log(`[KioskAuth] 認証成功: ${trimmedId}`);
+            setError('');
+            auth.login(trimmedId); // 認証が通ったのでグローバル状態にセット
+            navigate('/review/dashboard'); // ダッシュボードへ
+          } else {
+            // ★ API認証失敗 (401 Unauthorized など)
+            setError('認証に失敗しました。IDが正しくありません。');
+            setInputBuffer(''); // バッファをクリア
+          }
+          
+        } catch (err) {
+          // (Failed to fetch など、サーバーが落ちている場合)
+          console.error('認証APIエラー:', err);
+          if (err instanceof Error) {
+            setError(`エラー: 認証サーバーに接続できません: ${err.message}`);
+          } else {
+            setError('エラー: 認証サーバーに接続できません。');
+          }
+          setInputBuffer(''); // バッファをクリア
+        }
+        
+        setLoading(false);
+        
       } else {
         setError('IDが入力されていません');
+        setInputBuffer(''); // バッファをクリア
       }
-      setInputBuffer(''); // バッファをクリア
     }
-    
-    // "else" (Enter以外のキー) は、onChangeが処理するため、ここでは何もしない
-    // (以前はここで setInputBuffer(prev => prev + e.key) が呼ばれていたのがバグの原因)
   };
-  // ★★★ 修正ここまで ★★★
-
+  
   // Inputの値が変更されたときのハンドラ (手入力 ＆ NFCリーダー入力)
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-     // すべての入力(NFCリーダー含む)は onChange でバッファに反映させる
      setInputBuffer(e.target.value);
   };
 
@@ -62,17 +97,15 @@ export const KioskAuthPage = () => {
       <p>USB-NFCリーダーをかざしてください</p>
       <p>（またはIDを手入力してEnterキーを押してください）</p>
 
-      {/* onChange: すべての文字入力を受け取る (NFCリーダー含む)
-        onKeyDown: Enterキーの押下だけを検知する
-      */}
       <input
         ref={hiddenInputRef}
         type="text"
         value={inputBuffer}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
-        onBlur={focusInput} // フォーカスが外れたら即座に戻す
+        onBlur={focusInput} 
         autoFocus
+        disabled={loading} // ★ 認証中は入力を無効化
         style={{
           position: 'absolute',
           opacity: 0,

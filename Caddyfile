@@ -1,0 +1,17 @@
+# ★ 1. :80 で HTTP 待機 (HTTPS無効化)
+http://192.168.0.16:80 {
+
+    # API (変更なし)
+    handle_path /api/* {
+        reverse_proxy http://127.0.0.1:8000
+    }
+
+    # PWA (Vite)
+    handle {
+        reverse_proxy http://192.168.0.16:5173 {
+            # ★ 2. Hostヘッダーを ngrok のドメイン ({host}) にする
+            header_up Host {host} 
+            header_up X-Forwarded-Host {host}
+        }
+    }
+}

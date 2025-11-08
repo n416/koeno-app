@@ -4,14 +4,18 @@ import { db } from './db' // Dexie (IndexedDB)
 
 declare const self: ServiceWorkerGlobalScope & { __WB_MANIFEST: any }
 
-// .env から API のベース URL を取得 (Vite/Rollup がビルド時に置換)
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+// .env から API のベース URL を取得 ( "/api" または undefined が入る)
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
-console.log('[SW] サービスワーカー (v2-full, env) が読み込まれました。')
+console.log('[SW] サービスワーカー (v2-full, env, proxy) が読み込まれました。')
 console.log(`[SW] API_BASE_URL: ${API_BASE_URL}`)
+console.log(`[SW] 開発モード(DEV): ${import.meta.env.DEV}`)
 
 // 1. PWAのファイルキャッシュ (Workbox)
+// ★★★★★ 修正 ★★★★★
+// (if (!import.meta.env.DEV) の分岐を削除し、元の状態に戻す)
 precacheAndRoute(self.__WB_MANIFEST || [])
+// ★★★★★ 修正ここまで ★★★★★
 
 // 2. 'install' イベント (すぐに有効化)
 self.addEventListener('install', () => {
@@ -34,13 +38,8 @@ const SYNC_TAG = 'koeno-sync'
 const processSyncQueue = async () => {
   console.log('[SW] processSyncQueue が呼び出されました。');
 
-  if (!API_BASE_URL) {
-    console.error('[SW] VITE_API_BASE_URL が設定されていません。');
-    // リトライさせるためにエラーを throw
-    throw new Error('API URL is not configured.');
-  }
-  
-  const API_URL = `${API_BASE_URL}/upload_recording`;
+  // ★ 修正: 相対パス (プロキシ 経由) にする
+  const API_URL = `${API_BASE_URL}/upload_recording`; // -> /api/upload_recording
 
   try {
     const pendingRecords = await db.local_recordings.where('upload_status').equals('pending').toArray();
@@ -61,6 +60,7 @@ const processSyncQueue = async () => {
       formData.append('audio_blob', record.audio_blob, 'recording.webm');
       
       try {
+        // (API_URL が /api/upload_recording になっている)
         const response = await fetch(API_URL, { method: 'POST', body: formData });
         
         if (response.ok) {
@@ -70,25 +70,20 @@ const processSyncQueue = async () => {
         } else {
           // サーバーが 404 や 500 を返した場合
           console.error(`[SW] ${record.local_id} のアップロード失敗 (サーバーエラー):`, response.status);
-          // (リトライしても無駄な可能性が高いため、ここではエラーを throw しない)
-          // (もしリトライさせたい場合は throw new Error(...) する)
         }
       } catch (fetchError) {
         // ネットワークエラー (APIサーバーが落ちている場合など)
         console.error(`[SW] ${record.local_id} のアップロード失敗 (ネットワーク):`, fetchError);
-        // ★ ネットワークエラーはリトライすべきなので、エラーを throw する
         throw fetchError;
       }
     });
 
-    // すべてのアップロード試行が完了するのを待つ
     await Promise.all(uploadPromises);
     
     console.log('[SW] 同期処理が完了しました。');
 
   } catch (error) {
     console.error('[SW] 同期キューの処理中にエラーが発生しました:', error);
-    // ★ ネットワークエラーなどでリトライさせるため、エラーを throw する
     throw new Error('Sync processing failed, will retry.');
   }
 };
@@ -97,7 +92,6 @@ const processSyncQueue = async () => {
 self.addEventListener('sync', (event: any) => {
   console.log(`[SW] 'sync' イベントを受信しました！ タグ: ${event.tag}`);
   if (event.tag === SYNC_TAG) {
-    // processSyncQueue が完了するまで Service Worker を生かし続ける
     event.waitUntil(processSyncQueue());
   }
 });

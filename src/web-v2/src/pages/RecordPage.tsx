@@ -1,27 +1,20 @@
-import { useState, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../db';
 import { useNavigate } from 'react-router-dom';
 
-// .env から API のベース URL を取得
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+// .env から API のベース URL を取得 ( "/api" または undefined が入る)
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 /**
  * ★ RecordPage 内で実行される「フォアグラウンド同期」処理 ★
- * (sw.ts の processSyncQueue とロジックはほぼ同じだが、
- * こちらは即時実行され、コンポーネントの状態 (setStatusMessage) を更新する)
  */
 const processSyncQueue_Foreground = async (setStatusMessage: (msg: string) => void) => {
   console.log('[APP] 同期処理を開始します...');
   setStatusMessage('同期処理を開始します...');
 
-  if (!API_BASE_URL) {
-    console.error('[APP] VITE_API_BASE_URL が設定されていません。');
-    setStatusMessage('エラー: API設定がありません。');
-    return false; // エラーで中断
-  }
-
-  const API_URL = `${API_BASE_URL}/upload_recording`;
+  // ★ 修正: 相対パス (プロキシ 経由) にする
+  const API_URL = `${API_BASE_URL}/upload_recording`; // -> /api/upload_recording
 
   try {
     const pendingRecords = await db.local_recordings.where('upload_status').equals('pending').toArray();
@@ -43,19 +36,18 @@ const processSyncQueue_Foreground = async (setStatusMessage: (msg: string) => vo
       formData.append('audio_blob', record.audio_blob, 'recording.webm');
       
       try {
+        // (API_URL が /api/upload_recording になっている)
         const response = await fetch(API_URL, { method: 'POST', body: formData });
         if (response.ok) {
           await db.local_recordings.update(record.local_id, { upload_status: 'uploaded' });
           console.log(`[APP] ${record.local_id} のアップロード成功。`);
         } else {
-          // 404 や 500 エラー
           console.error(`[APP] ${record.local_id} のアップロード失敗 (サーバーエラー):`, response.status);
-          throw new Error(`Server error: ${response.status}`); // Promise.all で catch させる
+          throw new Error(`Server error: ${response.status}`);
         }
       } catch (fetchError) {
-        // ネットワークエラー (APIサーバーが落ちている場合など)
         console.error(`[APP] ${record.local_id} のアップロード失敗 (ネットワーク):`, fetchError);
-        throw fetchError; // Promise.all で catch させる
+        throw fetchError;
       }
     });
 
@@ -67,8 +59,13 @@ const processSyncQueue_Foreground = async (setStatusMessage: (msg: string) => vo
 
   } catch (error) {
     console.error('[APP] 同期キューの処理中にエラーが発生しました:', error);
-    setStatusMessage(`エラー: 同期処理に失敗しました: ${error.message}`);
-    return false; // エラーで中断
+    // (ts(18046) 対策)
+    if (error instanceof Error) {
+      setStatusMessage(`エラー: 同期処理に失敗しました: ${error.message}`);
+    } else {
+      setStatusMessage(`エラー: 同期処理に失敗しました: ${String(error)}`);
+    }
+    throw error; // handleLock の catch で補足させるため throw
   }
 };
 
@@ -95,18 +92,15 @@ export const RecordPage = () => {
     console.log('[APP] 同期処理を確認します...');
 
     try {
-      // 1. まず Service Worker の登録を取得
       const registration = await navigator.serviceWorker.ready;
       console.log('[APP] Service Worker 登録を取得しました:', registration);
 
-      // 2. オンラインかどうかで処理を分岐
       if (navigator.onLine) {
-        // ★ オンラインの場合: 即座にフォアグラウンド同期を実行
         console.log('[APP] オンラインです。フォアグラウンド同期を実行します。');
+        // (ts(18046) 対策済み)
         await processSyncQueue_Foreground(setStatusMessage);
-        // (フォアグラウンド同期の成否に関わらず、ログアウトは実行する)
+        
       } else {
-        // ★ オフラインの場合: Background Sync をスケジュール
         console.log('[APP] オフラインです。バックグラウンド同期をスケジュールします。');
         if (registration && registration.sync) {
           console.log('[APP] registration.sync は存在します。');
@@ -119,8 +113,14 @@ export const RecordPage = () => {
         }
       }
     } catch (err) {
-      console.error('[APP] handleLock の Service Worker 処理全体でエラーが発生:', err);
-      setStatusMessage(`エラー: 同期処理の登録に失敗しました: ${err.message}`);
+      // (ts(18046) 対策済み)
+      console.error('[APP] handleLock 処理全体でエラーが発生:', err);
+      if (err instanceof Error) {
+        // (processSyncQueue_Foreground が throw したエラーもここでキャッチ)
+        setStatusMessage(`エラー: 同期処理の登録または実行に失敗しました: ${err.message}`);
+      } else {
+        setStatusMessage(`エラー: 同期処理の登録または実行に失敗しました: ${String(err)}`);
+      }
     }
 
     console.log('[APP] ログアウト処理を実行し、認証ページに戻ります。');
@@ -133,7 +133,7 @@ export const RecordPage = () => {
     setStatusMessage('録音準備中...');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const options = { mimeType: 'audio/webm' }; // audio/ogg;codecs=opus や audio/mp4 も候補
+      const options = { mimeType: 'audio/webm' };
       const recorder = new MediaRecorder(stream, options);
       mediaRecorderRef.current = recorder;
       audioChunksRef.current = [];
@@ -153,7 +153,6 @@ export const RecordPage = () => {
         }
 
         try {
-          // IndexedDB に 'pending' ステータスで保存
           await db.local_recordings.add({
             caregiver_id: currentCaregiverId,
             audio_blob: audioBlob,
@@ -162,13 +161,13 @@ export const RecordPage = () => {
             created_at: new Date(),
           });
           setStatusMessage(`ローカル保存成功 (ID: ${currentCaregiverId})。データは同期待ちです。`);
-          setMemo(''); // メモ欄をクリア
+          setMemo('');
         } catch (dbError) {
           console.error('IndexedDB 保存エラー:', dbError);
-          setStatusMessage(`ローカルDBへの保存に失敗しました: ${dbError}`);
+          setStatusMessage(`ローカルDBへの保存に失敗しました: ${String(dbError)}`);
         }
         
-        stream.getTracks().forEach(track => track.stop()); // マイクを解放
+        stream.getTracks().forEach(track => track.stop());
       };
 
       recorder.start();
@@ -176,7 +175,12 @@ export const RecordPage = () => {
       setStatusMessage('録音中...');
     } catch (err) {
       console.error('マイクアクセスエラー:', err);
-      setStatusMessage('エラー: マイクへのアクセスが許可されていません。');
+      // (ts(18046) 対策)
+      if (err instanceof Error) {
+        setStatusMessage(`エラー: マイクへのアクセスが許可されていません: ${err.message}`);
+      } else {
+        setStatusMessage('エラー: マイクへのアクセスが許可されていません。');
+      }
     }
   };
 
@@ -185,7 +189,6 @@ export const RecordPage = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
-      // (onstop イベントハンドラが自動的に呼ばれ、保存処理が実行される)
     }
   };
 

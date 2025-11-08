@@ -1,0 +1,17 @@
+version: "3"
+agent:
+  authtoken: "33pRNUplqj9VfiYlV7zN4uqroHC_3gftkMCBnnqXJEWZp7ngx"
+
+tunnels:
+  # --- Caddy (リバースプロキシ全体) 用 ---
+  default:
+    proto: http
+    
+    # Caddyが待機しているアドレスとポート (Caddyfileの記述からポート80と推測)
+    addr: 192.168.0.16:80 
+    
+    # ★ APIで使っていた静的ドメインをこちらに割り当てます
+    domain: collected-donte-oophytic.ngrok-free.dev 
+    
+    # Caddyfileが "192.168.0.16" を想定しているため、Hostヘッダーを書き換えます
+    host_header: 192.168.0.16
