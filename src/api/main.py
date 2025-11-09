@@ -9,7 +9,7 @@ import sqlalchemy
 from pydantic import BaseModel
 import datetime # ★ datetime がインポートされていることを確認
 
-# (デバッグ用 logging, Request, JSONResponse は削除)
+# (デバッグ用 imports は削除)
 
 # -----------------------------------------------------------
 # 1. 設定 (Task 1: DB基盤)
@@ -72,6 +72,10 @@ recordings = sqlalchemy.Table(
     # ★ (v2.1 / Turn 96)
     sqlalchemy.Column("assignment_snapshot", sqlalchemy.JSON, nullable=True),
     
+    # ★★★ 新設 (v2.1 / Turn 106) ★★★
+    # 画面Cの要約テキスト [n46_p1_106] ({"u1": "...", "u3": "..."}) を保存
+    sqlalchemy.Column("summary_drafts", sqlalchemy.JSON, nullable=True),
+    
     sqlalchemy.Column("created_at", sqlalchemy.DateTime), # (defaultはstartupで制御)
 )
 
@@ -80,6 +84,7 @@ care_records = sqlalchemy.Table(
     "care_records",
     metadata,
     sqlalchemy.Column("care_record_id", sqlalchemy.Integer, primary_key=True, autoincrement=True),
+    # (注: v2.1では user_id は "u1", "u2" などのハードコードされた文字列を想定)
     sqlalchemy.Column("user_id", sqlalchemy.String, index=True), 
     sqlalchemy.Column("record_date", sqlalchemy.String, index=True), # (例: "2025-11-09")
     sqlalchemy.Column("final_text", sqlalchemy.Text),
@@ -92,7 +97,9 @@ recording_assignments = sqlalchemy.Table(
     "recording_assignments",
     metadata,
     sqlalchemy.Column("assignment_id", sqlalchemy.Integer, primary_key=True, autoincrement=True),
+    # (どの録音が)
     sqlalchemy.Column("recording_id", sqlalchemy.Integer, sqlalchemy.ForeignKey("recordings.recording_id"), index=True),
+    # (どの入居者に紐づいたか)
     sqlalchemy.Column("user_id", sqlalchemy.String, index=True), 
     sqlalchemy.Column("assigned_at", sqlalchemy.DateTime, default=datetime.datetime.now(datetime.UTC)),
     sqlalchemy.Column("assigned_by", sqlalchemy.String) # (保存した caregiver_id)
@@ -148,13 +155,17 @@ class UnassignedRecording(BaseModel):
 class TranscriptionResponse(BaseModel):
     recording_id: int
     ai_status: str
-    transcription_data: Optional[Any] 
+    # ★★★ 修正 (v2.1 / Turn 106) ★★★
+    transcription_data: Optional[Any] # (生の文字起こし結果か、編集済みのスナップショット)
+    summary_drafts: Optional[Dict[str, str]] = None # (保存済みの要約テキスト)
 
 
 class AssignmentInput(BaseModel):
     recording_id: int
     user_ids: List[str] # (例: ["u1", "u3"])
-    assignment_snapshot: List[Dict[str, Any]] 
+    assignment_snapshot: List[Dict[str, Any]] # (画面Cの tableRows)
+    # ★★★ 新設 (v2.1 / Turn 106) ★★★
+    summary_drafts: Dict[str, str] # (画面Cの summaryTexts)
 
 
 class AssignedRecording(BaseModel):
@@ -236,6 +247,7 @@ async def upload_recording(
         ai_status="pending",
         transcription_result=None,
         assignment_snapshot=None, # (v2.1 / Turn 96)
+        summary_drafts=None, # ★ (v2.1 / Turn 106)
         created_at=datetime.datetime.now(datetime.UTC) 
     )
     
@@ -308,7 +320,6 @@ async def get_care_record_detail(
         
         if not result:
             # (GM指示 [n46_p1_55] 準拠: 404を返さず200 OKと空データを返す)
-            # (デバッグログは削除)
             return CareRecordDetail(
                 user_id=user_id,
                 record_date=record_date,
@@ -370,8 +381,6 @@ async def get_unassigned_recordings(
 ):
     """ [v2.1] 画面B用: 未紐づけ録音リストを取得 """
     
-    # (デバッグログは削除)
-    
     try:
         # 1. 既に割り当て済みの recording_id のリストを取得
         query_assigned_ids = sqlalchemy.select(
@@ -380,8 +389,6 @@ async def get_unassigned_recordings(
         assigned_ids_result = await database.fetch_all(query_assigned_ids)
         assigned_ids = [row.recording_id for row in assigned_ids_result]
         
-        # (デバッグログは削除)
-
         # 2. (GM指示: 当該日のデータのみに絞り込む)
         query = recordings.select().where(
             (recordings.c.caregiver_id == caregiver_id) &
@@ -397,11 +404,9 @@ async def get_unassigned_recordings(
         query = query.order_by(recordings.c.created_at.desc())
         
         results = await database.fetch_all(query)
-        # (デバッグログは削除)
         return results
         
     except Exception as e:
-        # (デバッグログは削除)
         raise HTTPException(status_code=500, detail=f"録音リストの取得に失敗: {e}")
 
 @app.get("/assigned_recordings", response_model=List[AssignedRecording])
@@ -457,7 +462,9 @@ async def get_recording_transcription(
         return {
             "recording_id": result.recording_id,
             "ai_status": result.ai_status,
-            "transcription_data": transcription_data
+            "transcription_data": transcription_data,
+            # ★★★ 修正 (v2.1 / Turn 106) ★★★
+            "summary_drafts": result.summary_drafts or {}
         }
         
     except Exception as e:
@@ -497,13 +504,16 @@ async def save_assignments(
                 query_insert = recording_assignments.insert()
                 await database.execute_many(query_insert, new_assignments)
             
-            # 3. 画面Cの編集結果（スナップショット）を保存
+            # ★★★ 修正 (v2.1 / Turn 106) ★★★
+            # 3. 画面Cの編集結果（スナップショットと要約）を recordings テーブルに保存
             query_update_snapshot = recordings.update().where(
                 recordings.c.recording_id == recording_id
             ).values(
-                assignment_snapshot=assignment_input.assignment_snapshot
+                assignment_snapshot=assignment_input.assignment_snapshot,
+                summary_drafts=assignment_input.summary_drafts # ★ 追加
             )
             await database.execute(query_update_snapshot)
+            # ★★★ 修正ここまで ★★★
 
             return {"status": "success", "recording_id": recording_id, "assigned_users": user_ids}
 

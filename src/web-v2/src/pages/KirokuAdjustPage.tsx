@@ -2,6 +2,9 @@ import React, { useState, useEffect, useCallback, DragEvent } from 'react';
 import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext'; // ★ AuthContext をインポート
 
+// ★★★ 追加 (Turn 101) ★★★
+import { GeminiApiClient } from '../lib/geminiApiClient'; //
+
 // MUI Components
 import {
   Container,
@@ -28,7 +31,7 @@ import {
   Alert, // ★ Error表示
   CircularProgress // ★ Loading表示
 } from '@mui/material';
-import { Delete as DeleteIcon, AddCircleOutline as AddIcon, Close as CloseIcon, Check as CheckIcon } from '@mui/icons-material'; // ★ CheckIcon をインポート
+import { Delete as DeleteIcon, AddCircleOutline as AddIcon, Close as CloseIcon, Check as CheckIcon, AutoAwesome as AiIcon } from '@mui/icons-material'; // ★ CheckIcon, AiIcon をインポート
 
 // --- v2.1 モック に基づくダミーデータ ---
 const DUMMY_USERS = [
@@ -73,6 +76,8 @@ interface TranscriptionResponse {
     ai_status: string;
     // ★★★ 修正 (v2.1 / Turn 96) ★★★
     transcription_data: TranscriptionSegment[] | TableRowData[] | null;
+    // ★★★ 修正 (v2.1 / Turn 106) ★★★
+    summary_drafts: Record<string, string> | null; 
 }
 
 
@@ -112,6 +117,12 @@ export const KirokuAdjustPage = () => {
   const [saving, setSaving] = useState(false); // ★ 保存中ローディング
   const [error, setError] = useState<string | null>(null); // ★ データ取得エラー
 
+  // ★★★ 追加 (Turn 101) ★★★
+  // (要約欄のテキスト状態)
+  const [summaryTexts, setSummaryTexts] = useState<Record<string, string>>({});
+  // (要約生成中のローディング状態)
+  const [summaryLoading, setSummaryLoading] = useState<Record<string, boolean>>({});
+
   // --- 1. 初期データ読み込み (★ v2.1 / Turn 85 修正) ---
   useEffect(() => {
     const fetchTranscription = async () => {
@@ -150,8 +161,8 @@ export const KirokuAdjustPage = () => {
                 // (1) 編集済みスナップショット (TableRowData[])
                 console.log("復元: 編集済みスナップショットをロードしました。");
                 setTableRows(data.transcription_data as TableRowData[]);
-                // (復元時に activeGroups も再計算)
-                recalculateActiveGroups(data.transcription_data as TableRowData[]);
+                // (復元時に activeGroups と 要約テキストを再計算)
+                recalculateState(data.transcription_data as TableRowData[]);
             } else {
                 // (2) 生の文字起こし (TranscriptionSegment[])
                 console.log("復元: 生の文字起こしデータをロードしました。");
@@ -162,6 +173,12 @@ export const KirokuAdjustPage = () => {
                   assignedTo: null, // 初期状態は未割り当て
                 }));
                 setTableRows(initialTranscriptRows);
+            }
+            
+            // ★★★ 修正 (v2.1 / Turn 106) ★★★
+            // (保存済みの要約テキストを復元)
+            if (data.summary_drafts) {
+                setSummaryTexts(data.summary_drafts);
             }
         }
       } catch (err) {
@@ -174,19 +191,34 @@ export const KirokuAdjustPage = () => {
     fetchTranscription();
   }, [recordingId, auth.caregiverId]);
   
-  // ★★★ 新設 (v2.1 / Turn 96) ★★★
-  // (状態セットと activeGroups の計算を分離)
-  const recalculateActiveGroups = (rows: TableRowData[]) => {
+  // ★★★ 修正 (v2.1 / Turn 101) ★★★
+  // (状態セットと activeGroups, summaryTexts の計算)
+  const recalculateState = (rows: TableRowData[]) => {
       let currentGroup: AssignmentRow | null = null;
       const newActiveGroups = new Map<string, AssignmentRow>();
+      // (Turn 101: 要約テキストも同時に計算)
+      const newSummaryTexts = { ...summaryTexts }; 
       
       rows.forEach(row => {
           if (row.type === 'assignment') {
             currentGroup = row;
             newActiveGroups.set(row.userId, row); 
+            // (新しいグループが追加されたら、要約テキスト欄を初期化)
+            if (!newSummaryTexts[row.userId]) {
+                newSummaryTexts[row.userId] = '';
+            }
           }
       });
+      
+      // (削除されたグループの要約テキストを削除)
+      Object.keys(newSummaryTexts).forEach(key => {
+          if (!newActiveGroups.has(key)) {
+              delete newSummaryTexts[key];
+          }
+      });
+
       setActiveGroups(newActiveGroups);
+      setSummaryTexts(newSummaryTexts);
   };
 
   // --- 2. 割り当て行の追加・削除 (モック ロジック) ---
@@ -207,11 +239,9 @@ export const KirokuAdjustPage = () => {
         const newRows = [newGroup, ...prevRows];
         // (再計算)
         let currentGroup: AssignmentRow | null = null;
-        const newActiveGroups = new Map<string, AssignmentRow>();
         const updatedRows = newRows.map(row => {
           if (row.type === 'assignment') {
             currentGroup = row;
-            newActiveGroups.set(row.userId, row); 
             return row;
           }
           if (row.type === 'transcript') {
@@ -220,7 +250,8 @@ export const KirokuAdjustPage = () => {
           }
           return row;
         });
-        setActiveGroups(newActiveGroups);
+        
+        recalculateState(updatedRows); // ★ 修正
         return updatedRows;
     });
     setModalOpen(false);
@@ -233,12 +264,10 @@ export const KirokuAdjustPage = () => {
     // (割り当て状態を再計算させるためにコールバックで更新)
     setTableRows(() => {
         let currentGroup: AssignmentRow | null = null;
-        const newActiveGroups = new Map<string, AssignmentRow>();
         
         const updatedRows = newRows.map(row => {
           if (row.type === 'assignment') {
             currentGroup = row;
-            newActiveGroups.set(row.userId, row); 
             return row;
           }
           if (row.type === 'transcript') {
@@ -248,7 +277,7 @@ export const KirokuAdjustPage = () => {
           return row;
         });
 
-        setActiveGroups(newActiveGroups);
+        recalculateState(updatedRows); // ★ 修正
         return updatedRows;
     });
   };
@@ -289,13 +318,11 @@ export const KirokuAdjustPage = () => {
     // (状態再計算も同時に行うコールバック形式)
     setTableRows(() => {
         let currentGroup: AssignmentRow | null = null;
-        const newActiveGroups = new Map<string, AssignmentRow>();
         
         // (newRows の代わりに、変更済みの tableRows を使う)
         const updatedRows = tableRows.map(row => {
           if (row.type === 'assignment') {
             currentGroup = row;
-            newActiveGroups.set(row.userId, row); 
             return row;
           }
           if (row.type === 'transcript') {
@@ -305,7 +332,7 @@ export const KirokuAdjustPage = () => {
           return row;
         });
 
-        setActiveGroups(newActiveGroups);
+        recalculateState(updatedRows); // ★ 修正
         return updatedRows;
     });
     setDraggedRowId(null);
@@ -318,12 +345,10 @@ export const KirokuAdjustPage = () => {
     // (状態再計算も同時に行うコールバック形式)
     setTableRows(prevRows => {
         let currentGroup: AssignmentRow | null = null;
-        const newActiveGroups = new Map<string, AssignmentRow>();
 
         const updatedRows = prevRows.map(row => {
           if (row.type === 'assignment') {
             currentGroup = row;
-            newActiveGroups.set(row.userId, row); 
             return row;
           }
 
@@ -345,16 +370,57 @@ export const KirokuAdjustPage = () => {
           }
           return row;
         });
-
-        setActiveGroups(newActiveGroups);
+        
+        recalculateState(updatedRows); // ★ 修正
         return updatedRows;
     });
   };
   
-  // --- 6. AI草案 (ダミー) ---
-  const handleGenerateDraft = (userName: string) => {
-      alert(`（v2.1ダミー）「${userName}」の会話ブロックからAI要約を生成します`);
-      // (v2.2以降でクライアントサイドGemini APIを呼び出す)
+  // ★★★ 修正 (v2.1 / Turn 101) ★★★
+  // --- 6. AI草案 (本実装) ---
+  const handleGenerateDraft = async (userId: string, userName: string) => {
+      
+      // (1) APIキー/モデルを取得
+      const apiKey = localStorage.getItem('geminiApiKey');
+      const modelId = localStorage.getItem('geminiModelId');
+      if (!apiKey || !modelId) {
+          setError("Gemini APIキーが設定されていません。右上の設定（歯車）アイコンから設定してください。");
+          return;
+      }
+      
+      // (2) このグループ(userId)に割り当てられた発話行を収集
+      const assignedTranscripts = tableRows.filter(row => 
+          row.type === 'transcript' && row.assignedTo === userId
+      ) as TranscriptRow[];
+      
+      if (assignedTranscripts.length === 0) {
+          setError(`「${userName}」に割り当てられた発話がありません。`);
+          return;
+      }
+
+      setSummaryLoading(prev => ({ ...prev, [userId]: true }));
+      setError(null);
+      
+      // (3) プロンプトを生成
+      const conversationLog = assignedTranscripts.map(seg => 
+          `${seg.speaker}: ${seg.text}`
+      ).join('\n');
+      
+      const systemPrompt = `あなたは介護記録の作成を支援するAIです。以下の会話ログを分析し、介護士が「${userName}」に関して把握すべき重要な情報（健康状態、発言、行動）を、簡潔な箇条書きで要約してください。`;
+      
+      try {
+          const client = new GeminiApiClient(apiKey);
+          const result = await client.generateIsolatedContent(conversationLog, modelId, systemPrompt);
+          
+          // (4) 結果を該当する textarea に反映
+          setSummaryTexts(prev => ({ ...prev, [userId]: result }));
+          
+      } catch (e) {
+          if (e instanceof Error) setError(e.message);
+          else setError("AI要約の生成に失敗しました。");
+      }
+      
+      setSummaryLoading(prev => ({ ...prev, [userId]: false }));
   };
 
   // ★★★ 新設 (v2.1 / Turn 87) ★★★
@@ -382,7 +448,9 @@ export const KirokuAdjustPage = () => {
               recording_id: parseInt(recordingId, 10),
               user_ids: assignedUserIds,
               // ★★★ 修正 (v2.1 / Turn 96) ★★★
-              assignment_snapshot: tableRows 
+              assignment_snapshot: tableRows, 
+              // ★★★ 修正 (v2.1 / Turn 106) ★★★
+              summary_drafts: summaryTexts
             }),
         });
         
@@ -399,6 +467,11 @@ export const KirokuAdjustPage = () => {
        setSaving(false);
     }
     // (setSaving(false) は成功時には不要)
+  };
+  
+  // ★★★ 追加 (Turn 101) ★★★
+  const handleSummaryTextChange = (userId: string, text: string) => {
+      setSummaryTexts(prev => ({ ...prev, [userId]: text }));
   };
 
 
@@ -515,15 +588,21 @@ export const KirokuAdjustPage = () => {
                     minRows={4}
                     placeholder={`${group.userName} との会話要約を手動入力...`}
                     style={{ width: '100%', fontFamily: 'inherit', fontSize: '1em', padding: '8px' }}
+                    // ★★★ 修正 (Turn 101) ★★★
+                    value={summaryTexts[group.userId] || ''}
+                    onChange={(e) => handleSummaryTextChange(group.userId, e.target.value)}
+                    disabled={summaryLoading[group.userId] || saving}
                   />
                   <Button
                     size="small"
                     variant="contained"
                     sx={{ mt: 1 }}
-                    onClick={() => handleGenerateDraft(group.userName)}
-                    disabled={saving} // ★
+                    // ★★★ 修正 (Turn 101) ★★★
+                    onClick={() => handleGenerateDraft(group.userId, group.userName)}
+                    disabled={summaryLoading[group.userId] || saving}
+                    startIcon={summaryLoading[group.userId] ? <CircularProgress size={16} /> : <AiIcon />}
                   >
-                    AI生成
+                    {summaryLoading[group.userId] ? '生成中...' : 'AI生成'}
                   </Button>
                 </Paper>
               </Grid>
