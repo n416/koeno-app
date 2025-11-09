@@ -7,7 +7,8 @@ interface AuthContextType {
   caregiverId: string | null;
   // ★★★ Task 9.2: isAdmin ステートを追加 (null: 未確認, true: 管理者, false: 一般)
   isAdmin: boolean | null; 
-  login: (id: string) => void;
+  // ★★★ 修正: login を async に変更し、権限チェックを内包する ★★★
+  login: (id: string) => Promise<boolean>; // 権限チェックの結果を返す
   logout: () => void;
   // ★★★ Task 9.2: 認可チェック関数を追加 ★★★
   checkAdminStatus: () => Promise<boolean>;
@@ -20,11 +21,53 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   // ★★★ Task 9.2: isAdmin ステート (null: 未確認)
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
 
-  const login = (id: string) => {
+  /**
+   * ★★★ 修正: login 関数で認証と権限チェックを両方行う ★★★
+   */
+  const login = async (id: string) => {
+    // 1. まず ID をセット
     setCaregiverId(id);
-    // ★★★ Task 9.2: ログイン時は isAdmin ステータスをリセット
+    // 2. 権限を「未確認」にリセット
     setIsAdmin(null);
+
+    console.log('[AuthContext] ログインIDセット. 管理者権限をチェックしています...');
+    
+    try {
+      // 3. 引数の `id` を使って管理者APIを叩く
+      const API_URL = `${API_BASE_URL}/admin/caregivers`;
+      const response = await fetch(API_URL, {
+        method: 'GET',
+        headers: {
+          'X-Caller-ID': id, // ★ 引数の id を直接使用
+        }
+      });
+
+      // (401: ヘッダー欠落, 403: 権限なし)
+      if (response.status === 401 || response.status === 403) {
+        console.log('[AuthContext] 判定: 一般ユーザー (40x)');
+        setIsAdmin(false); // ★ state を更新
+        return false;
+      }
+      
+      // (200 OK)
+      if (response.ok) {
+        console.log('[AuthContext] 判定: 管理者 (200 OK)');
+        setIsAdmin(true); // ★ state を更新
+        return true;
+      }
+
+      // (500 エラーなど)
+      console.error('[AuthContext] 判定エラー:', response.status);
+      setIsAdmin(false);
+      return false;
+
+    } catch (err) {
+      console.error('[AuthContext] 認可チェックAPIの通信エラー:', err);
+      setIsAdmin(false);
+      return false;
+    }
   };
+
 
   const logout = () => {
     setCaregiverId(null);
@@ -34,7 +77,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   /**
    * ★★★ Task 9.2: 管理者ステータスをチェックする関数 ★★★
-   * (PO 1.3 の指示に基づき、/admin/caregivers へのテストアクセスで判定)
+   * (AdminProtectedRoute が使用するため、この関数は残す)
    */
   const checkAdminStatus = useCallback(async () => {
     if (!caregiverId) {
@@ -47,7 +90,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       return isAdmin;
     }
 
-    console.log('[AuthContext] 管理者権限をチェックしています...');
+    console.log('[AuthContext] (checkAdminStatus) 管理者権限をチェックしています...');
     
     try {
       const API_URL = `${API_BASE_URL}/admin/caregivers`;

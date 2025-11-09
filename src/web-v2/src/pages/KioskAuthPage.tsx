@@ -41,6 +41,59 @@ export const KioskAuthPage = () => {
     focusInput();
   }, []);
 
+  // ★★★ 修正: 認証API呼び出しと管理者チェックを共通化 ★★★
+  const attemptLogin = async (id: string) => {
+    if (id.length === 0) {
+      setError('IDが入力されていません');
+      return;
+    }
+    
+    setLoading(true);
+    setError('認証中...');
+
+    try {
+      // 1. ID が DB に存在するか (認証)
+      const response = await fetch(AUTH_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ caregiver_id: id })
+      });
+
+      if (response.ok) {
+        // 2. ★★★ 認証成功 → ログイン (権限チェックも内包) ★★★
+        console.log(`[KioskAuth] 認証成功: ${id}`);
+        setError('');
+        
+        // auth.login() が isAdmin のセットまで await してくれる
+        await auth.login(id); 
+        
+        // 3. 一覧画面へ遷移
+        navigate('/review/list'); 
+        
+      } else {
+        // ★ API認証失敗 (401 Unauthorized など)
+        const errMsg = await response.text();
+        setError(errMsg || '認証に失敗しました。IDが正しくありません。');
+        setInputBuffer(''); // バッファをクリア
+      }
+      
+    } catch (err) {
+      // (Failed to fetch など、サーバーが落ちている場合)
+      console.error('認証APIエラー:', err);
+      if (err instanceof Error) {
+        setError(`エラー: 認証サーバーに接続できません: ${err.message}`);
+      } else {
+        setError('エラー: 認証サーバーに接続できません。');
+      }
+      setInputBuffer(''); // バッファをクリア
+    }
+    
+    setLoading(false);
+  };
+
+
   /**
    * 認証APIをコールするロジック (Task 7.4)
    */
@@ -48,53 +101,8 @@ export const KioskAuthPage = () => {
     // Enterキーが押された場合のみ処理
     if (e.key === 'Enter') {
       const trimmedId = inputBuffer.trim();
-      
-      if (trimmedId.length > 0) {
-        
-        // ★ API認証処理
-        setLoading(true);
-        setError('認証中...');
-        
-        // (AUTH_URL が /api/authenticate になっている)
-        try {
-          const response = await fetch(AUTH_URL, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ caregiver_id: trimmedId })
-          });
-
-          if (response.ok) {
-            // ★ API認証成功
-            console.log(`[KioskAuth] 認証成功: ${trimmedId}`);
-            setError('');
-            auth.login(trimmedId); // 認証が通ったのでグローバル状態にセット
-            navigate('/review/list'); // ★ v2.1: 新リスト画面へ
-          } else {
-            // ★ API認証失敗 (401 Unauthorized など)
-            const errMsg = await response.text();
-            setError(errMsg || '認証に失敗しました。IDが正しくありません。');
-            setInputBuffer(''); // バッファをクリア
-          }
-          
-        } catch (err) {
-          // (Failed to fetch など、サーバーが落ちている場合)
-          console.error('認証APIエラー:', err);
-          if (err instanceof Error) {
-            setError(`エラー: 認証サーバーに接続できません: ${err.message}`);
-          } else {
-            setError('エラー: 認証サーバーに接続できません。');
-          }
-          setInputBuffer(''); // バッファをクリア
-        }
-        
-        setLoading(false);
-        
-      } else {
-        setError('IDが入力されていません');
-        setInputBuffer(''); // バッファをクリア
-      }
+      // ★★★ 修正: 共通認証関数を呼び出す ★★★
+      await attemptLogin(trimmedId);
     }
   };
   

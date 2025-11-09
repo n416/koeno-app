@@ -49,6 +49,10 @@ interface CareRecordDateList {
 // .env から API のベース URL を取得
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
+// ★★★ 修正: sessionStorage キー ★★★
+const SESSION_KEY_USER_ID = 'koeno_selected_user_id';
+const SESSION_KEY_USER_NAME = 'koeno_selected_user_name';
+
 /**
  * 画面A: 介護記録一覧 (kirokulist.html)
  */
@@ -56,8 +60,15 @@ export const KirokuListPage = () => {
   const auth = useAuth();
   const navigate = useNavigate();
 
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
-  const [selectedUserName, setSelectedUserName] = useState<string>('');
+  // ★★★ 修正: sessionStorage から状態を復元 ★★★
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(
+    () => sessionStorage.getItem(SESSION_KEY_USER_ID) || null
+  );
+  const [selectedUserName, setSelectedUserName] = useState<string>(
+    () => sessionStorage.getItem(SESSION_KEY_USER_NAME) || ''
+  );
+  // ★★★ 修正ここまで ★★★
+
   // ★ 修正: 初期選択日をハードコード(9)から動的な TODAY に変更
   const [selectedDate, setSelectedDate] = useState<number | null>(TODAY); 
   
@@ -92,9 +103,15 @@ export const KirokuListPage = () => {
       
       // 日付の "日" (9) だけをSetに格納
       const datesSet = new Set(data.dates.map(dateStr => {
-          // (日付形式 "2025-11-09" を 9 に変換)
-          // ★ タイムゾーンバグ修正: UTCではなくJST（ローカル時刻）として解釈
-          return new Date(dateStr + 'T00:00:00').getUTCDate(); 
+          // ★★★ タイムゾーンバグ修正 ★★★
+          // new Date() はブラウザのローカルTZで解釈するため、
+          // "2025-11-10T00:00:00" (JST) -> getUTCDate() は "9" になってしまう。
+          // APIが "YYYY-MM-DD" 形式のJST日付を返す前提のため、文字列から直接「日」をパースする。
+          try {
+            return parseInt(dateStr.split('-')[2], 10);
+          } catch (e) {
+            return 0; // パース失敗
+          }
       }));
       setRecordDates(datesSet);
 
@@ -136,6 +153,10 @@ export const KirokuListPage = () => {
   const handleSelectUser = (user: { id: string, name: string }) => {
     setSelectedUserId(user.id);
     setSelectedUserName(user.name);
+    // ★★★ 修正: sessionStorage に保存 ★★★
+    sessionStorage.setItem(SESSION_KEY_USER_ID, user.id);
+    sessionStorage.setItem(SESSION_KEY_USER_NAME, user.name);
+
     fetchCareRecordDates(user.id); // 選択と同時にマーカー取得
   };
 
@@ -156,7 +177,12 @@ export const KirokuListPage = () => {
   useEffect(() => {
     // ページロード時に「本日」の入居者マーカーを読み込む
     fetchUserMarkers(TODAY);
-  }, [fetchUserMarkers]);
+    
+    // ★★★ 修正: ページロード時に、sessionStorageに保存されたユーザーがいればマーカーを再取得 ★★★
+    if (selectedUserId) {
+      fetchCareRecordDates(selectedUserId);
+    }
+  }, [fetchUserMarkers, selectedUserId, fetchCareRecordDates]); // ★ 依存配列修正
 
 
   // --- 5. カレンダー描画ロジック (useMemoで最適化) ---

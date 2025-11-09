@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { Routes, Route, useLocation } from 'react-router-dom'; // ★ useLocation をインポート
+// ★★★ 修正: Link (RouterLink) と Button をインポート ★★★
+import { Routes, Route, useLocation, Link as RouterLink } from 'react-router-dom'; 
 import { AuthPage } from './pages/AuthPage';
 import { RecordPage } from './pages/RecordPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
@@ -23,8 +24,14 @@ import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { lightTheme, darkTheme } from './theme';
-import { AppBar, Toolbar, Typography, IconButton } from '@mui/material';
+// ★★★ 修正: Button をインポート ★★★
+import { AppBar, Toolbar, Typography, IconButton, Button } from '@mui/material'; 
 import SettingsIcon from '@mui/icons-material/Settings';
+// ★★★ 修正: 管理者アイコンをインポート ★★★
+import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
+// ★★★ 修正: AuthContext をインポート ★★★
+import { useAuth } from './contexts/AuthContext'; 
+
 
 /**
  * [v2.1] App.tsx 最終版
@@ -40,6 +47,9 @@ function App() {
     [prefersDarkMode],
   );
 
+  // ★★★ 修正: auth コンテキストを取得 ★★★
+  const auth = useAuth();
+
   // --- v2.1 APIキーモーダル用 State ---
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('geminiApiKey') || '');
@@ -53,7 +63,7 @@ function App() {
     if (key) {
       handleTestConnection(key);
     }
-  }, []);
+  }, []); // ★ 依存配列から handleTestConnection を削除 (useCallbackしていないため)
 
   const handleTestConnection = useCallback(async (keyToTest: string) => {
     setTestStatus('テスト中...');
@@ -94,6 +104,19 @@ function App() {
             <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
               KOENO-APP (v2.1) レビュー
             </Typography>
+
+            {/* ★★★ 修正: 管理者(isAdmin === true)の場合のみ表示 ★★★ */}
+            {auth.isAdmin === true && (
+              <Button
+                color="inherit"
+                component={RouterLink}
+                to="/review/admin/users"
+                startIcon={<AdminPanelSettingsIcon />}
+              >
+                ユーザー管理
+              </Button>
+            )}
+
             <IconButton color="inherit" onClick={() => setIsSettingsOpen(true)} title="Gemini APIキー設定">
               <SettingsIcon />
             </IconButton>
