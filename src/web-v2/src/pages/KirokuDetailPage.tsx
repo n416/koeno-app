@@ -26,11 +26,13 @@ interface CareRecordDetail {
     // (他はv2.1では表示しない)
 }
 
-// (main.py UnassignedRecording に合わせた型)
-interface UnassignedRecording {
+// ★★★ 修正 (v2.1 / Turn 92) ★★★
+// (main.py UnassignedRecording / AssignedRecording に合わせた型)
+interface RecordingBase {
     recording_id: number;
     created_at: string;
-    caregiver_id: string; // (モックの「担当」)
+    caregiver_id: string; 
+    memo_text: Optional[string];
 }
 
 // .env から API のベース URL を取得
@@ -47,7 +49,10 @@ export const KirokuDetailPage = () => {
   const navigate = useNavigate();
 
   const [recordText, setRecordText] = useState('');
-  const [unassignedList, setUnassignedList] = useState<UnassignedRecording[]>([]);
+  // ★★★ 修正 (v2.1 / Turn 92) ★★★
+  const [assignedList, setAssignedList] = useState<RecordingBase[]>([]);
+  const [unassignedList, setUnassignedList] = useState<RecordingBase[]>([]);
+  
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
@@ -55,10 +60,8 @@ export const KirokuDetailPage = () => {
   const DUMMY_USERS: { [key: string]: string } = { 'u1': '佐藤 様', 'u2': '鈴木 様', 'u3': '高橋 様', 'u4': '田中 様' };
   const userName = DUMMY_USERS[userId || ''] || '不明な入居者';
   
-  // v2.1 GM指示: 紐づけ済みリストはダミー
-  const assignedList = [
-      { recording_id: '001', created_at: '11/09 08:05', caregiver_id: '自分' }
-  ];
+  // ★★★ 削除 (v2.1 / Turn 92) ★★★
+  // const assignedList = [ ... ]; // (ダミーデータを削除)
 
   // --- 1. データ取得 (画面Bのメインロジック) ---
   const fetchData = useCallback(async () => {
@@ -71,34 +74,36 @@ export const KirokuDetailPage = () => {
     setError(null);
 
     try {
+      // (認証ヘッダー)
+      const headers = { 'X-Caller-ID': auth.caregiverId };
+
       // (1) 既存の介護記録テキストを取得
-      const detailRes = await fetch(`${API_PATH}/care_record_detail?user_id=${userId}&record_date=${date}`, {
-        headers: { 'X-Caller-ID': auth.caregiverId } // (認証ヘッダー)
-      });
-      
-      // ★★★ GM指示 [n46_p1_55] に基づく修正 ★★★
-      // 404 (異常系) を投げず、200 OK のみ処理する
+      const detailRes = await fetch(`${API_PATH}/care_record_detail?user_id=${userId}&record_date=${date}`, { headers });
       if (detailRes.ok) {
         const detailData: CareRecordDetail = await detailRes.json();
-        // (main.py が "final_text": "" を返すので、それをセット)
         setRecordText(detailData.final_text); 
       } else {
-        // (404 や 500)
-        // 404はmain.pyが返さなくなったため、これはサーバーエラー等を意味する
         throw new Error(`介護記録の取得失敗: ${detailRes.status}`);
       }
-      // ★★★ 修正ここまで ★★★
 
+      // ★★★ 修正 (v2.1 / Turn 92) ★★★
+      
+      // (2) 紐づけ済み録音リストを取得 (本実装)
+      const assignedRes = await fetch(`${API_PATH}/assigned_recordings?user_id=${userId}&record_date=${date}`, { headers });
+      if (!assignedRes.ok) {
+        throw new Error(`紐づけ済み録音の取得失敗: ${assignedRes.status}`);
+      }
+      const assignedData: RecordingBase[] = await assignedRes.json();
+      setAssignedList(assignedData);
+
+      // (3) 未紐づけの録音リストを取得 (修正済み)
       // ★★★ v2.1 修正 (Turn 84) ★★★
-      // (2) 未紐づけの録音リストを取得 (★ record_date を追加)
-      const unassignedRes = await fetch(`${API_PATH}/unassigned_recordings?caregiver_id=${auth.caregiverId}&record_date=${date}`, {
-        headers: { 'X-Caller-ID': auth.caregiverId } // (認証ヘッダー)
-      });
+      // (GET /unassigned_recordings 呼び出しに record_date を追加)
+      const unassignedRes = await fetch(`${API_PATH}/unassigned_recordings?caregiver_id=${auth.caregiverId}&record_date=${date}`, { headers });
       if (!unassignedRes.ok) {
-        // (こちらは404を想定していないため、エラーとして扱う)
         throw new Error(`未紐づけ録音の取得失敗: ${unassignedRes.status}`);
       }
-      const unassignedData: UnassignedRecording[] = await unassignedRes.json();
+      const unassignedData: RecordingBase[] = await unassignedRes.json();
       setUnassignedList(unassignedData);
 
     } catch (err) {
@@ -212,6 +217,7 @@ export const KirokuDetailPage = () => {
               紐づけ済み録音
             </Typography>
             <List sx={{ maxHeight: '40vh', overflowY: 'auto' }}>
+              {/* ★★★ 修正 (v2.1 / Turn 92): ダミー -> State ★★★ */}
               {assignedList.map(rec => (
                 <ListItemButton 
                   key={rec.recording_id} 
@@ -220,10 +226,13 @@ export const KirokuDetailPage = () => {
                 >
                   <ListItemText 
                     primary={`録音ID: ${rec.recording_id}`}
-                    secondary={`録音日時: ${rec.created_at} | 担当: ${rec.caregiver_id}`}
+                    secondary={`録音日時: ${new Date(rec.created_at).toLocaleString('ja-JP')} | 担当: ${rec.caregiver_id}`}
                   />
                 </ListItemButton>
               ))}
+              {assignedList.length === 0 && !loading && (
+                <ListItem><ListItemText secondary="（この日に紐づけられた録音はありません）" /></ListItem>
+              )}
             </List>
           </Paper>
         </Grid>

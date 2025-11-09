@@ -28,7 +28,7 @@ import {
   Alert, // ★ Error表示
   CircularProgress // ★ Loading表示
 } from '@mui/material';
-import { Delete as DeleteIcon, AddCircleOutline as AddIcon, Close as CloseIcon } from '@mui/icons-material';
+import { Delete as DeleteIcon, AddCircleOutline as AddIcon, Close as CloseIcon, Check as CheckIcon } from '@mui/icons-material'; // ★ CheckIcon をインポート
 
 // --- v2.1 モック に基づくダミーデータ ---
 const DUMMY_USERS = [
@@ -39,19 +39,15 @@ const DUMMY_USERS = [
     // (モック に合わせる)
 ];
 
-// (v2.1ではAPIから取得するが、フォールバックとしてダミーを定義)
-// ★★★ 削除 (v2.1 / Turn 85) ★★★
-// const DUMMY_TRANSCRIPTS_C = [ ... ];
+// (ダミーデータは削除)
 
 // --- 型定義 ---
 
-// ★★★ 修正 (v2.1 / Turn 85) ★★★
-// (main.py の run_worker.py が生成するJSON形式に合わせる)
+// (main.py の run_worker.py が生成するJSON形式)
 interface TranscriptionSegment {
-  // id: string; (DBのJSONにはIDがないため削除)
   speaker: string;
-  start: number; // (time ではなく start)
-  end: number;   // (time ではなく end)
+  start: number; 
+  end: number;   
   text: string;
 }
 
@@ -75,7 +71,8 @@ type TableRowData = TranscriptRow | AssignmentRow;
 interface TranscriptionResponse {
     recording_id: int;
     ai_status: string;
-    transcription_result: TranscriptionSegment[] | null;
+    // ★★★ 修正 (v2.1 / Turn 96) ★★★
+    transcription_data: TranscriptionSegment[] | TableRowData[] | null;
 }
 
 
@@ -94,7 +91,7 @@ const modalStyle = {
 
 // .env から API のベース URL を取得
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
-// ★★★ v2.1 修正: /api が重複しないよう修正 ★★★
+// ★★★ /api が重複しないよう修正 ★★★
 const API_PATH = API_BASE_URL; // ★ VITE_API_BASE_URL (/api) をそのまま使う
 
 /**
@@ -112,6 +109,7 @@ export const KirokuAdjustPage = () => {
   const [assignmentCounter, setAssignmentCounter] = useState(0);
   
   const [loading, setLoading] = useState(true); // ★ データ取得ローディング
+  const [saving, setSaving] = useState(false); // ★ 保存中ローディング
   const [error, setError] = useState<string | null>(null); // ★ データ取得エラー
 
   // --- 1. 初期データ読み込み (★ v2.1 / Turn 85 修正) ---
@@ -138,18 +136,33 @@ export const KirokuAdjustPage = () => {
         
         const data: TranscriptionResponse = await response.json();
 
-        if (data.ai_status !== 'completed' || !data.transcription_result) {
+        // ★★★ 修正 (v2.1 / Turn 96) ★★★
+        // (data.transcription_result -> data.transcription_data)
+        if (data.ai_status !== 'completed' || !data.transcription_data) {
             setError(`この録音(ID: ${recordingId})は、まだAI処理が完了していません。(ステータス: ${data.ai_status})`);
             setTableRows([]);
+        
         } else {
-            // (ReactのKey用にランダムIDを付与)
-            const initialTranscriptRows: TranscriptRow[] = data.transcription_result.map((seg, index) => ({
-              ...seg,
-              id: `t-${index}-${Math.random()}`, // (簡易的なユニークID)
-              type: 'transcript',
-              assignedTo: null, // 初期状態は未割り当て
-            }));
-            setTableRows(initialTranscriptRows);
+            // (v2.1 / Turn 96) 
+            // 既に編集済み（スナップショット）か、生の文字起こしかを判定
+            // (スナップショットは 'type' を持つ)
+            if (data.transcription_data.length > 0 && (data.transcription_data[0] as any).type) {
+                // (1) 編集済みスナップショット (TableRowData[])
+                console.log("復元: 編集済みスナップショットをロードしました。");
+                setTableRows(data.transcription_data as TableRowData[]);
+                // (復元時に activeGroups も再計算)
+                recalculateActiveGroups(data.transcription_data as TableRowData[]);
+            } else {
+                // (2) 生の文字起こし (TranscriptionSegment[])
+                console.log("復元: 生の文字起こしデータをロードしました。");
+                const initialTranscriptRows: TranscriptRow[] = (data.transcription_data as TranscriptionSegment[]).map((seg, index) => ({
+                  ...seg,
+                  id: `t-${index}-${Math.random()}`, // (簡易的なユニークID)
+                  type: 'transcript',
+                  assignedTo: null, // 初期状態は未割り当て
+                }));
+                setTableRows(initialTranscriptRows);
+            }
         }
       } catch (err) {
         if (err instanceof Error) setError(err.message);
@@ -161,7 +174,20 @@ export const KirokuAdjustPage = () => {
     fetchTranscription();
   }, [recordingId, auth.caregiverId]);
   
-  // (以下、D&D, トグル, AIダミーロジック等は Turn 84 と同様のため省略)
+  // ★★★ 新設 (v2.1 / Turn 96) ★★★
+  // (状態セットと activeGroups の計算を分離)
+  const recalculateActiveGroups = (rows: TableRowData[]) => {
+      let currentGroup: AssignmentRow | null = null;
+      const newActiveGroups = new Map<string, AssignmentRow>();
+      
+      rows.forEach(row => {
+          if (row.type === 'assignment') {
+            currentGroup = row;
+            newActiveGroups.set(row.userId, row); 
+          }
+      });
+      setActiveGroups(newActiveGroups);
+  };
 
   // --- 2. 割り当て行の追加・削除 (モック ロジック) ---
   const handleAddAssignment = (user: { id: string, name: string, color: string }) => {
@@ -241,23 +267,32 @@ export const KirokuAdjustPage = () => {
     e.preventDefault();
     if (!draggedRowId) return;
 
+    // ★★★★★ 修正 (Turn 94) ★★★★★
+    // (D&Dロジックをモック に合わせる)
+    
     const draggedIndex = tableRows.findIndex(r => r.id === draggedRowId);
+    if (draggedIndex === -1) return;
+    
+    const [draggedItem] = tableRows.splice(draggedIndex, 1);
+    
+    // ドロップ先行（targetRow）を見つける
     const targetIndex = tableRows.findIndex(r => r.id === targetRow.id);
-    
-    if (draggedIndex === -1 || targetIndex === -1) return;
-
-    const newRows = [...tableRows];
-    const [draggedItem] = newRows.splice(draggedIndex, 1);
-    
-    // targetIndex の *前* に挿入
-    newRows.splice(targetIndex, 0, draggedItem);
+    if (targetIndex === -1) {
+        // (見つからない = テーブルの末尾)
+        tableRows.push(draggedItem);
+    } else {
+        // targetIndex の *前* に挿入
+         tableRows.splice(targetIndex, 0, draggedItem);
+    }
+    // ★★★★★ 修正ここまで ★★★★★
     
     // (状態再計算も同時に行うコールバック形式)
     setTableRows(() => {
         let currentGroup: AssignmentRow | null = null;
         const newActiveGroups = new Map<string, AssignmentRow>();
         
-        const updatedRows = newRows.map(row => {
+        // (newRows の代わりに、変更済みの tableRows を使う)
+        const updatedRows = tableRows.map(row => {
           if (row.type === 'assignment') {
             currentGroup = row;
             newActiveGroups.set(row.userId, row); 
@@ -322,6 +357,51 @@ export const KirokuAdjustPage = () => {
       // (v2.2以降でクライアントサイドGemini APIを呼び出す)
   };
 
+  // ★★★ 新設 (v2.1 / Turn 87) ★★★
+  // --- 7. 割り当て承認 (本実装) ---
+  const handleApproveAssignments = async () => {
+    if (!auth.caregiverId || !recordingId) {
+        setError("認証情報または録音IDがありません。");
+        return;
+    }
+    
+    setSaving(true);
+    setError(null);
+    
+    // (1) 割り当てられたユニークな user_id のリストを作成
+    const assignedUserIds = Array.from(activeGroups.keys());
+    
+    try {
+        const response = await fetch(`${API_PATH}/save_assignments`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Caller-ID': auth.caregiverId,
+            },
+            body: JSON.stringify({
+              recording_id: parseInt(recordingId, 10),
+              user_ids: assignedUserIds,
+              // ★★★ 修正 (v2.1 / Turn 96) ★★★
+              assignment_snapshot: tableRows 
+            }),
+        });
+        
+        if (!response.ok) {
+            throw new Error(`割り当ての保存に失敗: ${response.status}`);
+        }
+        
+        // (2) 成功したら画面Bに戻る
+        navigate(-1); // (前のページ = 画面B に戻る)
+        
+    } catch (err) {
+       if (err instanceof Error) setError(err.message);
+       else setError("割り当ての保存処理中にエラーが発生しました。");
+       setSaving(false);
+    }
+    // (setSaving(false) は成功時には不要)
+  };
+
+
   return (
     <Container maxWidth="lg" sx={{ mt: 4 }}>
       <MuiLink component={RouterLink} to="/review/list" sx={{ mb: 2, display: 'inline-block' }}>
@@ -336,6 +416,7 @@ export const KirokuAdjustPage = () => {
           variant="contained"
           startIcon={<AddIcon />}
           onClick={() => setModalOpen(true)}
+          disabled={loading || saving} // ★
         >
           [ + 新規割り当てを追加 ]
         </Button>
@@ -375,7 +456,7 @@ export const KirokuAdjustPage = () => {
                       ▼ {row.userName} グループ (ID: {row.userId}) ▼
                     </TableCell>
                     <TableCell align="center">
-                      <IconButton size="small" onClick={() => handleDeleteAssignment(row.id)} sx={{ color: '#fff' }}>
+                      <IconButton size="small" onClick={() => handleDeleteAssignment(row.id)} sx={{ color: '#fff' }} disabled={saving}>
                         <DeleteIcon />
                       </IconButton>
                     </TableCell>
@@ -391,6 +472,8 @@ export const KirokuAdjustPage = () => {
                   <TableRow
                     key={row.id}
                     onClick={() => handleToggleNone(row.id)}
+                    // ★★★★★ 修正 (Turn 94) ★★★★★
+                    // (発話行も DragOver と Drop の対象にする)
                     onDragOver={handleDragOver}
                     onDrop={(e) => handleDrop(e as any, row)}
                     sx={{
@@ -438,6 +521,7 @@ export const KirokuAdjustPage = () => {
                     variant="contained"
                     sx={{ mt: 1 }}
                     onClick={() => handleGenerateDraft(group.userName)}
+                    disabled={saving} // ★
                   >
                     AI生成
                   </Button>
@@ -454,9 +538,11 @@ export const KirokuAdjustPage = () => {
           variant="contained"
           color="primary"
           size="large"
-          onClick={() => navigate(-1)} // 画面Bに戻る
+          onClick={handleApproveAssignments} // ★ 修正
+          disabled={loading || saving} // ★ 修正
+          startIcon={saving ? <CircularProgress size={24} /> : <CheckIcon />} // ★ 修正
         >
-          この割り当てで承認する
+          {saving ? '保存中...' : 'この割り当てで承認する'}
         </Button>
       </Box>
 
