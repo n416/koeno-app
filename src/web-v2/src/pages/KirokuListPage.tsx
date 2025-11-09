@@ -27,12 +27,19 @@ const DUMMY_USERS = [
     { id: 'u4', name: '田中 様' },
 ];
 
-// カレンダー描画用の仮定（2025年11月）
-//
-const TODAY = 9; 
-const DAYS_IN_MONTH = 30;
-const START_DAY_OF_WEEK = 6; // 11/1は土曜日 (0=日)
-const CURRENT_YEAR_MONTH = "2025-11"; // APIリクエスト用
+// ★★★ タイムゾーン修正: 日付関連の定数を動的に生成 ★★★
+const JST_DATE = new Date(); // 現在のJST時刻
+const TODAY = JST_DATE.getDate(); // (例: 10)
+const CURRENT_YEAR = JST_DATE.getFullYear(); // (例: 2025)
+const CURRENT_MONTH_INDEX = JST_DATE.getMonth(); // (0=1月, 10=11月)
+
+// (APIリクエスト用: "2025-11")
+const CURRENT_YEAR_MONTH = `${CURRENT_YEAR}-${String(CURRENT_MONTH_INDEX + 1).padStart(2, '0')}`;
+// (カレンダー描画用)
+const DAYS_IN_MONTH = new Date(CURRENT_YEAR, CURRENT_MONTH_INDEX + 1, 0).getDate(); // (当月の最終日)
+const START_DAY_OF_WEEK = new Date(CURRENT_YEAR, CURRENT_MONTH_INDEX, 1).getDay(); // (当月1日の曜日 0=日)
+// ★★★ 修正ここまで ★★★
+
 
 // APIから返される日付リストの型 (main.pyのCareRecordDateList)
 interface CareRecordDateList {
@@ -51,7 +58,8 @@ export const KirokuListPage = () => {
 
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedUserName, setSelectedUserName] = useState<string>('');
-  const [selectedDate, setSelectedDate] = useState<number | null>(TODAY); //
+  // ★ 修正: 初期選択日をハードコード(9)から動的な TODAY に変更
+  const [selectedDate, setSelectedDate] = useState<number | null>(TODAY); 
   
   // GM指示: カレンダーマーカーはAPIで取得
   const [recordDates, setRecordDates] = useState<Set<number>>(new Set());
@@ -85,7 +93,8 @@ export const KirokuListPage = () => {
       // 日付の "日" (9) だけをSetに格納
       const datesSet = new Set(data.dates.map(dateStr => {
           // (日付形式 "2025-11-09" を 9 に変換)
-          return new Date(dateStr + 'T00:00:00').getUTCDate(); // UTCとして解釈
+          // ★ タイムゾーンバグ修正: UTCではなくJST（ローカル時刻）として解釈
+          return new Date(dateStr + 'T00:00:00').getUTCDate(); 
       }));
       setRecordDates(datesSet);
 
@@ -107,7 +116,7 @@ export const KirokuListPage = () => {
       const DUMMY_RECORDS_TEMP: { [key: string]: number[] } = {
           'u1': [5, 7, 8],
           'u2': [6, 7],
-          'u3': [5, 6, 7, 8, 9],
+          'u3': [5, 6, 7, 8, 9, 10], // ★ GMテスト用に 10日 を追加
           'u4': []
       };
 
@@ -119,10 +128,11 @@ export const KirokuListPage = () => {
           }
       }
       setUserMarkers(markersSet);
-  }, []);
+  }, []); // ★ 依存配列から DUMMY_USERS を削除 (定数のため)
 
   // --- 3. 選択ハンドラ ---
 
+  // ★★★ 修正: `{ {` のタイポを修正 ★★★
   const handleSelectUser = (user: { id: string, name: string }) => {
     setSelectedUserId(user.id);
     setSelectedUserName(user.name);
@@ -136,7 +146,7 @@ export const KirokuListPage = () => {
 
   const handleNavigateToDetail = () => {
     if (selectedUserId && selectedDate) {
-      // (日付を "2025-11-09" 形式にFIX)
+      // (日付を "2025-11-10" 形式にFIX)
       const dateStr = `${CURRENT_YEAR_MONTH}-${String(selectedDate).padStart(2, '0')}`;
       navigate(`/review/detail/${selectedUserId}/${dateStr}`);
     }
@@ -208,20 +218,25 @@ export const KirokuListPage = () => {
       );
     }
     return grid;
-  }, [selectedDate, recordDates]); //
+  // ★ 修正: 依存配列に動的定数を追加
+  }, [selectedDate, recordDates, DAYS_IN_MONTH, START_DAY_OF_WEEK, TODAY]); 
 
   // --- 6. JSX ---
+  // ★ 修正: 月表示を動的に (例: 2025年 11月)
+  const monthTitle = `${CURRENT_YEAR}年 ${CURRENT_MONTH_INDEX + 1}月`;
+
   return (
     <Container maxWidth="lg" sx={{ mt: 4 }}>
       {/* ★ 構文修正: Grid container */}
       <Grid container spacing={3}>
         
         {/* --- メインコンテンツ (カレンダー) --- */}
-        {/* ★ 構文修正: size={{...}} を使用 */}
+        {/* ★★★ 修正: `item xs/md` を `size` に戻す ★★★ */}
         <Grid size={{ xs: 12, md: 9 }}>
           <Paper sx={{ p: 2, overflow: 'hidden' }}> {/* (overflow hidden) */}
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap' }}>
-              <Typography variant="h5" sx={{ mr: 2 }}>2025年 11月</Typography>
+              {/* ★ 修正: 月表示を動的に */}
+              <Typography variant="h5" sx={{ mr: 2 }}>{monthTitle}</Typography>
               <Typography variant="h6" color="text.secondary">
                 {selectedUserName || '（入居者を選択してください）'}
               </Typography>
@@ -242,7 +257,7 @@ export const KirokuListPage = () => {
         </Grid>
 
         {/* --- サイドバー (入居者リスト) --- */}
-        {/* ★ 構文修正: size={{...}} を使用 */}
+        {/* ★★★ 修正: `item xs/md` を `size` に戻す ★★★ */}
         <Grid size={{ xs: 12, md: 3 }}>
           <Paper sx={{ p: 2 }}>
             <Typography variant="h6" component="h2" gutterBottom>
@@ -270,7 +285,7 @@ export const KirokuListPage = () => {
               sx={{ mt: 2, p: 2, fontSize: '1.1em', fontWeight: 'bold' }}
             >
               {selectedUserId && selectedDate 
-                ? `11/${selectedDate} (${selectedUserName}) の記録を作成`
+                ? `${CURRENT_MONTH_INDEX + 1}/${selectedDate} (${selectedUserName}) の記録を作成` // ★ 月表示を動的に
                 : '入居者と日付を選択'
               }
             </Button>

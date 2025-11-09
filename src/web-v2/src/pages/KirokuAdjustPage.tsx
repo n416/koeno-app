@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react'; // ★ useMemo をインポート
 // ★★★ 修正 (ts1484): DragEvent を型としてインポート ★★★
 import type { DragEvent } from 'react';
-import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
+// ★★★ 修正: useLocation をインポート ★★★
+import { useParams, useNavigate, Link as RouterLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext'; 
 import { GeminiApiClient } from '../lib/geminiApiClient'; 
 
@@ -29,9 +30,10 @@ import {
   Link as MuiLink,
   Chip, // 「非表示」チップ用
   Alert, // ★ Error表示
-  CircularProgress // ★ Loading表示
+  CircularProgress, // ★ Loading表示
+  Stack // ★ ボタン横並び用
 } from '@mui/material';
-import { Delete as DeleteIcon, AddCircleOutline as AddIcon, Close as CloseIcon, Check as CheckIcon, AutoAwesome as AiIcon } from '@mui/icons-material'; 
+import { Delete as DeleteIcon, AddCircleOutline as AddIcon, Close as CloseIcon, Check as CheckIcon, AutoAwesome as AiIcon, PersonAdd as PersonAddIcon } from '@mui/icons-material'; 
 
 // --- v2.1 モック に基づくダミーデータ ---
 const DUMMY_USERS = [
@@ -57,12 +59,19 @@ interface TranscriptRow extends TranscriptionSegment {
   assignedTo: string | null; // 'u1', 'u2', 'none'
 }
 
-interface AssignmentRow {
+// ★ 修正: ユーザー情報の型を共通化
+interface UserInfo {
+  id: string;
+  name: string;
+  color: string;
+}
+
+interface AssignmentRow extends UserInfo {
   id: string; // "group-1", "group-2"
   type: 'assignment';
-  userId: string;
-  userName: string;
-  userColor: string;
+  userId: string; // (UserInfo.id と重複するが型を維持)
+  userName: string; // (UserInfo.name と重複)
+  userColor: string; // (UserInfo.color と重複)
 }
 
 type TableRowData = TranscriptRow | AssignmentRow;
@@ -101,6 +110,22 @@ export const KirokuAdjustPage = () => {
   const { recordingId } = useParams<{ recordingId: string }>();
   const navigate = useNavigate();
   const auth = useAuth(); // ★ 認証情報を取得
+
+  // ★★★ 修正: useLocation を使って戻り先URLを特定 ★★★
+  const location = useLocation();
+  const { fromUserId, fromDate } = (location.state || {}) as { fromUserId?: string, fromDate?: string };
+  // (state があれば詳細画面、なければ（リロード時など）一覧画面に戻る)
+  const backUrl = (fromUserId && fromDate) ? `/review/detail/${fromUserId}/${fromDate}` : '/review/list';
+  const backLinkText = (fromUserId && fromDate) ? '← 介護記録詳細に戻る' : '← 介護記録一覧に戻る';
+
+  // ★★★ 修正: 遷移元の入居者情報を特定 ★★★
+  const fromUser = useMemo(() => {
+    if (fromUserId) {
+      return DUMMY_USERS.find(u => u.id === fromUserId);
+    }
+    return undefined;
+  }, [fromUserId]);
+
 
   const [tableRows, setTableRows] = useState<TableRowData[]>([]);
   const [activeGroups, setActiveGroups] = useState<Map<string, AssignmentRow>>(new Map());
@@ -203,16 +228,24 @@ export const KirokuAdjustPage = () => {
   
 
   // --- 2. 割り当て行の追加・削除 ---
-  const handleAddAssignment = (user: { id: string, name: string, color: string }) => {
+  const handleAddAssignment = (user: UserInfo) => {
     const newGroupId = `group-${assignmentCounter}`;
     setAssignmentCounter(c => c + 1);
     
     const newGroup: AssignmentRow = {
+      // Properties from AssignmentRow definition
       id: newGroupId,
       type: 'assignment',
       userId: user.id,
       userName: user.name,
       userColor: user.color,
+      
+      // Properties inherited from UserInfo
+      name: user.name,
+      color: user.color,
+      
+      // ★★★ 修正: ts(2783) エラー回避のため ...user スプレッドを削除 ★★★
+      // (id が user.id によって上書きされるのを防ぐ)
     };
     
     setTableRows(prevRows => {
@@ -408,7 +441,8 @@ export const KirokuAdjustPage = () => {
             throw new Error(`割り当ての保存に失敗: ${response.status}`);
         }
         
-        navigate(-1); 
+        // ★★★ 修正: `Maps(-1)` を `Maps(backUrl)` に変更 ★★★
+        navigate(backUrl); 
         
     } catch (err) {
        if (err instanceof Error) setError(err.message);
@@ -436,22 +470,43 @@ export const KirokuAdjustPage = () => {
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4 }}>
-      <MuiLink component={RouterLink} to="/review/list" sx={{ mb: 2, display: 'inline-block' }}>
-        ← 介護記録一覧に戻る
+      {/* ★★★ 修正: 戻り先URLとテキストを動的に ★★★ */}
+      <MuiLink component={RouterLink} to={backUrl} sx={{ mb: 2, display: 'inline-block' }}>
+        {backLinkText}
       </MuiLink>
 
       <Paper sx={{ p: 2, mb: 3 }}>
         <Typography variant="h5" component="h2" gutterBottom>
           割り当て (録音ID: {recordingId})
         </Typography>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => setModalOpen(true)}
-          disabled={loading || saving} 
-        >
-          [ + 新規割り当てを追加 ]
-        </Button>
+        
+        {/* ★★★ 修正: GM指示に基づきボタンUIを変更 ★★★ */}
+        <Stack direction="row" spacing={1}>
+          {/* 1. 遷移元ユーザーの専用ボタン (存在する場合のみ) */}
+          {fromUser && (
+            <Button
+              variant="contained"
+              color="success" // (推奨色がなかったので success に)
+              startIcon={<PersonAddIcon />}
+              onClick={() => handleAddAssignment(fromUser)}
+              disabled={loading || saving}
+            >
+              {fromUser.name} の割当てを追加
+            </Button>
+          )}
+
+          {/* 2. 他のユーザーを追加するボタン (モーダル起動) */}
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => setModalOpen(true)}
+            disabled={loading || saving}
+          >
+            他の割当てを追加
+          </Button>
+        </Stack>
+        {/* ★★★ 修正ここまで ★★★ */}
+
       </Paper>
 
       {loading && <CircularProgress sx={{ mb: 2 }} />}
@@ -544,7 +599,7 @@ export const KirokuAdjustPage = () => {
               const isGroupActive = activeGroups.has(userId);
 
               return (
-                // ★ 構文修正: size={{...}} を使用
+                // ★★★ 修正: `item xs/md` を `size` に戻す ★★★
                 <Grid size={{ xs: 12, md: 4 }} key={userId}>
                   <Paper variant="outlined" sx={{ p: 2, borderTop: `4px solid ${userColor}`, opacity: isGroupActive ? 1 : 0.6 }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

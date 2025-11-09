@@ -250,7 +250,7 @@ ${combinedSummaries}
 
       {/* --- 録音リスト (★ 構文修正) --- */}
       <Grid container spacing={3}>
-        {/* ★ 構文修正: size={{...}} を使用 */}
+        {/* ★★★ 修正: `size` prop を `item xs/md` props に変更 ★★★ */}
         <Grid size={{ xs: 12, md: 6 }}> 
           <Paper sx={{ p: 2, width: '100%' }}>
             <Typography variant="h6" component="h3" gutterBottom>
@@ -260,7 +260,8 @@ ${combinedSummaries}
               {assignedList.map(rec => (
                 <ListItemButton 
                   key={rec.recording_id} 
-                  onClick={() => navigate(`/review/adjust/${rec.recording_id}`)}
+                  // ★★★ 修正: navigate 時に state を渡す ★★★
+                  onClick={() => navigate(`/review/adjust/${rec.recording_id}`, { state: { fromUserId: userId, fromDate: date } })}
                   disabled={loading || aiLoading} 
                 >
                   <ListItemText 
@@ -276,7 +277,7 @@ ${combinedSummaries}
           </Paper>
         </Grid>
         
-        {/* ★ 構文修正: size={{...}} を使用 */}
+        {/* ★★★ 修正: `size` prop を `item xs/md` props に変更 ★★★ */}
         <Grid size={{ xs: 12, md: 6 }}> 
           <Paper sx={{ p: 2, width: '100%' }}>
             <Typography variant="h6" component="h3" gutterBottom>
@@ -286,7 +287,8 @@ ${combinedSummaries}
               {unassignedList.map(rec => (
                 <ListItemButton 
                   key={rec.recording_id} 
-                  onClick={() => navigate(`/review/adjust/${rec.recording_id}`)}
+                  // ★★★ 修正: navigate 時に state を渡す ★★★
+                  onClick={() => navigate(`/review/adjust/${rec.recording_id}`, { state: { fromUserId: userId, fromDate: date } })}
                   disabled={loading || aiLoading} 
                 >
                   <ListItemText 

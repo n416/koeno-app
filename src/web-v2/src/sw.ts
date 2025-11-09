@@ -56,9 +56,13 @@ const processSyncQueue = async () => {
 
       const formData = new FormData();
       formData.append('caregiver_id', record.caregiver_id);
-      formData.append('memo_text', record.memo_text);
+      formData.append('memo_text', record.memo_text); // (v2.2では空文字)
       formData.append('audio_blob', record.audio_blob, 'recording.webm');
       
+      // ★★★ タイムゾーン修正 ★★★
+      // (Date オブジェクトを ISO 文字列に変換して送信)
+      formData.append('created_at_iso', record.created_at.toISOString());
+
       try {
         // (API_URL が /api/upload_recording になっている)
         const response = await fetch(API_URL, { method: 'POST', body: formData });

@@ -6,8 +6,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Optional
 import databases
 import sqlalchemy
+# ★★★ 修正: pydantic から BaseModel をインポート (NameError 修正) ★★★
 from pydantic import BaseModel
-import datetime # ★ datetime がインポートされていることを確認
+# ★★★ タイムゾーン修正: datetime から timezone もインポート ★★★
+import datetime
+from datetime import timezone # ★ 追加
 
 # (デバッグ用 imports は削除)
 
@@ -76,7 +79,8 @@ recordings = sqlalchemy.Table(
     # 画面Cの要約テキスト [n46_p1_106] ({"u1": "...", "u3": "..."}) を保存
     sqlalchemy.Column("summary_drafts", sqlalchemy.JSON, nullable=True),
     
-    sqlalchemy.Column("created_at", sqlalchemy.DateTime), # (defaultはstartupで制御)
+    # ★★★ タイムゾーン修正: PWAからのJSTタイムスタンプをUTCで保存 ★★★
+    sqlalchemy.Column("created_at", sqlalchemy.DateTime), # (defaultは削除)
 )
 
 # v2.1: care_records (変更なし)
@@ -225,11 +229,26 @@ def read_root():
 async def upload_recording(
     audio_blob: UploadFile = File(...),
     caregiver_id: str = Form(...),
-    memo_text: str = Form(...)
+    memo_text: str = Form(...),
+    # ★★★ タイムゾーン修正: PWAからJSTのISO文字列を受け取る ★★★
+    created_at_iso: str = Form(...) 
 ):
     upload_dir = "uploads"
     os.makedirs(upload_dir, exist_ok=True)
     
+    # ★★★ タイムゾーン修正: PWAからの時刻をパース ★★★
+    try:
+        # (例: "2025-11-10T08:30:00.123Z" または "...+09:00")
+        client_created_at = datetime.datetime.fromisoformat(created_at_iso)
+        # タイムゾーン情報を保持したままUTCに変換
+        created_at_utc = client_created_at.astimezone(timezone.utc)
+    except (ValueError, TypeError):
+        # パース失敗時はサーバーのUTC時刻でフォールバック (v2.1の動作)
+        print(f"警告: ISO日時のパース失敗。サーバー時刻を使用: {created_at_iso}")
+        created_at_utc = datetime.datetime.now(timezone.utc)
+    # ★★★ 修正ここまで ★★★
+    
+    # (ファイル名はサーバー時刻ベースでOK)
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_caregiver_id = caregiver_id.replace(":", "_").replace("/", "_").replace("\\", "_")
     safe_filename = audio_blob.filename.replace(":", "_").replace("/", "_").replace("\\", "_")
@@ -251,7 +270,8 @@ async def upload_recording(
         transcription_result=None,
         assignment_snapshot=None, # (v2.1 / Turn 96)
         summary_drafts=None, # ★ (v2.1 / Turn 106)
-        created_at=datetime.datetime.now(datetime.UTC) 
+        # ★★★ タイムゾーン修正: パースしたUTC時刻を保存 ★★★
+        created_at=created_at_utc 
     )
     
     try:
@@ -392,10 +412,17 @@ async def get_unassigned_recordings(
         assigned_ids_result = await database.fetch_all(query_assigned_ids)
         assigned_ids = [row.recording_id for row in assigned_ids_result]
         
+        # ★★★ タイムゾーンバグ修正 ★★★
+        # (SQLite方言: UTCの created_at を JST (+9時間) に変換してから日付比較)
+        jst_date_func = sqlalchemy.func.date(
+            sqlalchemy.func.datetime(recordings.c.created_at, '+9 hours')
+        )
+        
         # 2. (GM指示: 当該日のデータのみに絞り込む)
         query = recordings.select().where(
             (recordings.c.caregiver_id == caregiver_id) &
-            (sqlalchemy.func.date(recordings.c.created_at) == record_date)
+            # (修正: JST変換後の日付で比較)
+            (jst_date_func == record_date)
         )
         
         # (v2.1 / Turn 99 バグ修正)
@@ -419,6 +446,12 @@ async def get_assigned_recordings(
 ):
     """ [v2.1] 画面B用: 指定した入居者・日付に紐づく録音リストを取得 """
     try:
+        # ★★★ タイムゾーンバグ修正 ★★★
+        # (SQLite方言: UTCの created_at を JST (+9時間) に変換してから日付比較)
+        jst_date_func = sqlalchemy.func.date(
+            sqlalchemy.func.datetime(recordings.c.created_at, '+9 hours')
+        )
+
         j = sqlalchemy.join(
             recording_assignments,
             recordings,
@@ -435,7 +468,8 @@ async def get_assigned_recordings(
         ).select_from(j).where(
             (recording_assignments.c.user_id == user_id) &
             # (v2.1 / Turn 94 修正)
-            (sqlalchemy.func.date(recordings.c.created_at) == record_date)
+            # (修正: JST変換後の日付で比較)
+            (jst_date_func == record_date)
         ).order_by(recordings.c.created_at.asc())
         
         results = await database.fetch_all(query)
@@ -474,7 +508,7 @@ async def get_recording_transcription(
         }
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"文字起こしデータの取得に失敗: {e}")
+        raise HTTPException(status_code=500, detail=f"文字起こしデータの取得に失敗しました: {e}")
 
 
 @app.post("/save_assignments", status_code=201)
@@ -613,7 +647,7 @@ async def admin_delete_caregiver(
 # 10. サーバーの起動 (開発用)
 # -----------------------------------------------------------
 if __name__ == "__main__":
-    print("開発サーバー(v2.1)を http://127.0.0.1:8000 で起動します")
+    print("開発サーバー(v2.1 / タイムゾーン修正版)を http://127.0.0.1:8000 で起動します")
     
     # ★ Task 7 修正: ngrok プロキシ対応
     uvicorn.run(
