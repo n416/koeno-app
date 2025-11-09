@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+// ★★★ Gemini API クライアントをインポート ★★★
+import { GeminiApiClient } from '../lib/geminiApiClient'; 
 
 // MUI Components
 import {
@@ -19,6 +21,8 @@ import {
   Alert,
   Link as MuiLink
 } from '@mui/material';
+// ★★★ AiIcon をインポート ★★★
+import { AutoAwesome as AiIcon } from '@mui/icons-material';
 
 // (main.py CareRecordDetail に合わせた型)
 interface CareRecordDetail {
@@ -32,7 +36,10 @@ interface RecordingBase {
     recording_id: number;
     created_at: string;
     caregiver_id: string; 
-    memo_text: Optional[string];
+    memo_text: string | null; // ★ 修正 (Optional[str] -> string | null)
+    // ★★★ 以下2行を追加 (main.pyの修正に合わせる) ★★★
+    assignment_snapshot: any | null; 
+    summary_drafts: Record<string, string> | null;
 }
 
 // .env から API のベース URL を取得
@@ -54,6 +61,8 @@ export const KirokuDetailPage = () => {
   const [unassignedList, setUnassignedList] = useState<RecordingBase[]>([]);
   
   const [loading, setLoading] = useState(true);
+  // ★★★ AI生成中のローディング状態を追加 ★★★
+  const [aiLoading, setAiLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
   // v2.1 GM指示: 入居者リストはダミー
@@ -119,16 +128,62 @@ export const KirokuDetailPage = () => {
 
   // --- 2. ダミーのAI連携 (v2.1仕様) ---
 
-  const handleGenerateDraft = () => {
-    //
-    // GM指示: v2.1ではクライアントサイドGemini (ダミー)
+  // ★★★ 「草案をAI生成」のロジックを本実装に置き換え ★★★
+  const handleGenerateDraft = async () => {
+    if (!userId) {
+      setError("入居者IDが不明です。");
+      return;
+    }
+
+    // (1) APIキー/モデルを取得
+    const apiKey = localStorage.getItem('geminiApiKey');
+    const modelId = localStorage.getItem('geminiModelId');
+    if (!apiKey || !modelId) {
+        setError("Gemini APIキーが設定されていません。右上の設定（歯車）アイコンから設定してください。");
+        return;
+    }
+    
+    // (2) 紐づけられた録音 (assignedList) から、この入居者 (userId) 向けの要約を収集
+    const summaries: string[] = [];
+    assignedList.forEach(rec => {
+      // summary_drafts ({"u1": "...", "u3": "..."}) から、現在の利用者の要約を取得
+      if (rec.summary_drafts && rec.summary_drafts[userId]) {
+        summaries.push(rec.summary_drafts[userId]);
+      }
+    });
+
+    if (summaries.length === 0) {
+      setError("AI生成の元になる「紐づけ済みの要約」がありません。先に画面Cで各録音の割り当てと要約の保存を行ってください。");
+      return;
+    }
+
+    setAiLoading(true);
+    setError(null);
     setRecordText("AIが草案を生成中...\n");
-    setTimeout(() => {
-        setRecordText(`【${userName} - ${date} 介護記録草案】
-・08:05: （録音ID: 001より）
-　- （紐づけられた会話の要約）
-`);
-    }, 1000);
+
+    // (3) プロンプトを生成
+    const combinedSummaries = summaries.map((s, i) => `--- 個別要約 ${i + 1} ---\n${s}`).join('\n\n');
+    
+    const systemPrompt = "あなたは介護記録の作成を支援するAIです。";
+    const userPrompt = `以下の複数の「個別要約」を読みやすいように結合・整理し、${userName}（${date}）の最終的な「介護記録（草案）」を作成してください。
+
+${combinedSummaries}
+`;
+
+    try {
+        const client = new GeminiApiClient(apiKey);
+        const result = await client.generateIsolatedContent(userPrompt, modelId, systemPrompt);
+        
+        // (4) 結果をテキストエリアに反映
+        setRecordText(result);
+        
+    } catch (e) {
+        if (e instanceof Error) setError(e.message);
+        else setError("AI要約の生成に失敗しました。");
+        setRecordText(""); // エラー時はクリア
+    }
+    
+    setAiLoading(false);
   };
   
   const handleSaveRecord = async () => {
@@ -189,9 +244,11 @@ export const KirokuDetailPage = () => {
             variant="contained"
             color="success"
             onClick={handleGenerateDraft}
-            disabled={loading}
+            // ★★★ disabled と startIcon を修正 ★★★
+            disabled={loading || aiLoading}
+            startIcon={aiLoading ? <CircularProgress size={20} color="inherit" /> : <AiIcon />}
           >
-            [ 草案をAI生成 ]
+            {aiLoading ? 'AI生成中...' : '[ 草案をAI生成 ]'}
           </Button>
         </Box>
         <TextField
@@ -201,7 +258,8 @@ export const KirokuDetailPage = () => {
           rows={10}
           fullWidth
           placeholder="ここに介護記録を入力します。&#10;[ 草案をAI生成 ] ボタンを押すと、下に表示されている「紐づけ済み録音」の内容に基づいてAIが草案を作成します。"
-          disabled={loading}
+          // ★★★ disabled を修正 ★★★
+          disabled={loading || aiLoading}
         />
       </Paper>
       
@@ -222,7 +280,7 @@ export const KirokuDetailPage = () => {
                 <ListItemButton 
                   key={rec.recording_id} 
                   onClick={() => navigate(`/review/adjust/${rec.recording_id}`)}
-                  disabled={loading}
+                  disabled={loading || aiLoading} // ★ 修正
                 >
                   <ListItemText 
                     primary={`録音ID: ${rec.recording_id}`}
@@ -248,7 +306,7 @@ export const KirokuDetailPage = () => {
                 <ListItemButton 
                   key={rec.recording_id} 
                   onClick={() => navigate(`/review/adjust/${rec.recording_id}`)}
-                  disabled={loading}
+                  disabled={loading || aiLoading} // ★ 修正
                 >
                   <ListItemText 
                     primary={`録音ID: ${rec.recording_id}`}
@@ -271,7 +329,7 @@ export const KirokuDetailPage = () => {
           color="primary"
           size="large"
           onClick={handleSaveRecord}
-          disabled={loading}
+          disabled={loading || aiLoading} // ★ 修正
           sx={{ fontSize: '1.1em', fontWeight: 'bold' }}
         >
           {loading ? '保存中...' : 'この内容で記録を保存'}

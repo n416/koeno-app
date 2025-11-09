@@ -123,6 +123,37 @@ export const KirokuAdjustPage = () => {
   // (要約生成中のローディング状態)
   const [summaryLoading, setSummaryLoading] = useState<Record<string, boolean>>({});
 
+  // ★★★ 修正: recalculateState が DBからロードした要約(loadedSummaries) を受け取るように変更 ★★★
+  const recalculateState = useCallback((rows: TableRowData[], loadedSummaries: Record<string, string>) => {
+      let currentGroup: AssignmentRow | null = null;
+      const newActiveGroups = new Map<string, AssignmentRow>();
+      
+      // ★★★ 修正: 現在のステートではなく、引数の loadedSummaries をベースにする ★★★
+      const newSummaryTexts = { ...loadedSummaries }; 
+      
+      rows.forEach(row => {
+          if (row.type === 'assignment') {
+            currentGroup = row;
+            newActiveGroups.set(row.userId, row); 
+            // (新しいグループが追加されたら、要約テキスト欄を初期化)
+            if (!newSummaryTexts[row.userId]) {
+                newSummaryTexts[row.userId] = '';
+            }
+          }
+      });
+      
+      // ★★★ 修正: 割り当てが消えても要約は削除しない (ロジックをコメントアウト) ★★★
+      // (削除されたグループの要約テキストを削除)
+      // Object.keys(newSummaryTexts).forEach(key => {
+      //     if (!newActiveGroups.has(key)) {
+      //         delete newSummaryTexts[key];
+      //     }
+      // });
+
+      setActiveGroups(newActiveGroups);
+      setSummaryTexts(newSummaryTexts);
+  }, []); // ★ useCallback の依存配列から summaryTexts を削除
+
   // --- 1. 初期データ読み込み (★ v2.1 / Turn 85 修正) ---
   useEffect(() => {
     const fetchTranscription = async () => {
@@ -154,15 +185,21 @@ export const KirokuAdjustPage = () => {
             setTableRows([]);
         
         } else {
+            
+            // ★★★ 修正: DBからロードした要約を先に取得 ★★★
+            const loadedSummaries = data.summary_drafts || {};
+            setSummaryTexts(loadedSummaries); // ★ 先にステートにセット
+            
             // (v2.1 / Turn 96) 
             // 既に編集済み（スナップショット）か、生の文字起こしかを判定
             // (スナップショットは 'type' を持つ)
             if (data.transcription_data.length > 0 && (data.transcription_data[0] as any).type) {
                 // (1) 編集済みスナップショット (TableRowData[])
                 console.log("復元: 編集済みスナップショットをロードしました。");
-                setTableRows(data.transcription_data as TableRowData[]);
-                // (復元時に activeGroups と 要約テキストを再計算)
-                recalculateState(data.transcription_data as TableRowData[]);
+                const loadedRows = data.transcription_data as TableRowData[];
+                setTableRows(loadedRows);
+                // ★★★ 修正: ロードした要約を recalculateState に渡す ★★★
+                recalculateState(loadedRows, loadedSummaries);
             } else {
                 // (2) 生の文字起こし (TranscriptionSegment[])
                 console.log("復元: 生の文字起こしデータをロードしました。");
@@ -173,13 +210,11 @@ export const KirokuAdjustPage = () => {
                   assignedTo: null, // 初期状態は未割り当て
                 }));
                 setTableRows(initialTranscriptRows);
+                // ★★★ 修正: ロードした要約を recalculateState に渡す (グループはまだない) ★★★
+                recalculateState(initialTranscriptRows, loadedSummaries);
             }
             
-            // ★★★ 修正 (v2.1 / Turn 106) ★★★
-            // (保存済みの要約テキストを復元)
-            if (data.summary_drafts) {
-                setSummaryTexts(data.summary_drafts);
-            }
+            // (保存済みの要約テキストを復元する古いロジックは削除)
         }
       } catch (err) {
         if (err instanceof Error) setError(err.message);
@@ -189,37 +224,9 @@ export const KirokuAdjustPage = () => {
     };
     
     fetchTranscription();
-  }, [recordingId, auth.caregiverId]);
+  }, [recordingId, auth.caregiverId, recalculateState]); // ★ recalculateState を依存配列に追加
   
-  // ★★★ 修正 (v2.1 / Turn 101) ★★★
-  // (状態セットと activeGroups, summaryTexts の計算)
-  const recalculateState = (rows: TableRowData[]) => {
-      let currentGroup: AssignmentRow | null = null;
-      const newActiveGroups = new Map<string, AssignmentRow>();
-      // (Turn 101: 要約テキストも同時に計算)
-      const newSummaryTexts = { ...summaryTexts }; 
-      
-      rows.forEach(row => {
-          if (row.type === 'assignment') {
-            currentGroup = row;
-            newActiveGroups.set(row.userId, row); 
-            // (新しいグループが追加されたら、要約テキスト欄を初期化)
-            if (!newSummaryTexts[row.userId]) {
-                newSummaryTexts[row.userId] = '';
-            }
-          }
-      });
-      
-      // (削除されたグループの要約テキストを削除)
-      Object.keys(newSummaryTexts).forEach(key => {
-          if (!newActiveGroups.has(key)) {
-              delete newSummaryTexts[key];
-          }
-      });
-
-      setActiveGroups(newActiveGroups);
-      setSummaryTexts(newSummaryTexts);
-  };
+  // (古い recalculateState は削除)
 
   // --- 2. 割り当て行の追加・削除 (モック ロジック) ---
   const handleAddAssignment = (user: { id: string, name: string, color: string }) => {
@@ -251,7 +258,8 @@ export const KirokuAdjustPage = () => {
           return row;
         });
         
-        recalculateState(updatedRows); // ★ 修正
+        // ★★★ 修正: 現在の summaryTexts ステートを渡す ★★★
+        recalculateState(updatedRows, summaryTexts); 
         return updatedRows;
     });
     setModalOpen(false);
@@ -277,7 +285,8 @@ export const KirokuAdjustPage = () => {
           return row;
         });
 
-        recalculateState(updatedRows); // ★ 修正
+        // ★★★ 修正: 現在の summaryTexts ステートを渡す ★★★
+        recalculateState(updatedRows, summaryTexts); 
         return updatedRows;
     });
   };
@@ -332,7 +341,8 @@ export const KirokuAdjustPage = () => {
           return row;
         });
 
-        recalculateState(updatedRows); // ★ 修正
+        // ★★★ 修正: 現在の summaryTexts ステートを渡す ★★★
+        recalculateState(updatedRows, summaryTexts); 
         return updatedRows;
     });
     setDraggedRowId(null);
@@ -371,7 +381,8 @@ export const KirokuAdjustPage = () => {
           return row;
         });
         
-        recalculateState(updatedRows); // ★ 修正
+        // ★★★ 修正: 現在の summaryTexts ステートを渡す ★★★
+        recalculateState(updatedRows, summaryTexts);
         return updatedRows;
     });
   };
@@ -474,6 +485,18 @@ export const KirokuAdjustPage = () => {
       setSummaryTexts(prev => ({ ...prev, [userId]: text }));
   };
 
+  // ★★★ 新設: 要約削除ハンドラ ★★★
+  const handleDeleteSummary = (userId: string) => {
+      const userName = DUMMY_USERS.find(u => u.id === userId)?.name || userId;
+      if (window.confirm(`「${userName}」の要約を削除しますか？`)) {
+          setSummaryTexts(prev => {
+              const newSummaries = { ...prev };
+              delete newSummaries[userId];
+              return newSummaries;
+          });
+      }
+  };
+
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4 }}>
@@ -573,40 +596,61 @@ export const KirokuAdjustPage = () => {
         </Table>
       </TableContainer>
 
-      {/* --- 動的要約欄 --- */}
-      {activeGroups.size > 0 && (
+      {/* --- 動的要約欄 (★★★ 全面修正) --- */}
+      {Object.keys(summaryTexts).length > 0 && (
         <Paper sx={{ p: 2, mb: 3 }}>
           <Typography variant="h5" component="h2" gutterBottom>要約</Typography>
-          {/* ★ v2 Grid構文 (containerはデフォルト) */}
           <Grid container spacing={2}>
-            {Array.from(activeGroups.values()).map(group => (
-              // ★ v2 Grid構文 ('item' 削除, 'xs' 'md' をpropsとして渡す)
-              <Grid xs={12} md={4} key={group.userId}>
-                <Paper variant="outlined" sx={{ p: 2, borderTop: `4px solid ${group.userColor}` }}>
-                  <Typography variant="h6">{group.userName} 向け要約</Typography>
-                  <TextareaAutosize
-                    minRows={4}
-                    placeholder={`${group.userName} との会話要約を手動入力...`}
-                    style={{ width: '100%', fontFamily: 'inherit', fontSize: '1em', padding: '8px' }}
-                    // ★★★ 修正 (Turn 101) ★★★
-                    value={summaryTexts[group.userId] || ''}
-                    onChange={(e) => handleSummaryTextChange(group.userId, e.target.value)}
-                    disabled={summaryLoading[group.userId] || saving}
-                  />
-                  <Button
-                    size="small"
-                    variant="contained"
-                    sx={{ mt: 1 }}
-                    // ★★★ 修正 (Turn 101) ★★★
-                    onClick={() => handleGenerateDraft(group.userId, group.userName)}
-                    disabled={summaryLoading[group.userId] || saving}
-                    startIcon={summaryLoading[group.userId] ? <CircularProgress size={16} /> : <AiIcon />}
-                  >
-                    {summaryLoading[group.userId] ? '生成中...' : 'AI生成'}
-                  </Button>
-                </Paper>
-              </Grid>
-            ))}
+            {Object.keys(summaryTexts).map(userId => {
+              
+              // 情報を取得 (割り当てが削除されていても DUMMY_USERS から引く)
+              const activeGroup = activeGroups.get(userId);
+              const userInfo = DUMMY_USERS.find(u => u.id === userId);
+              
+              const userName = activeGroup?.userName || userInfo?.name || `不明なID (${userId})`;
+              const userColor = activeGroup?.userColor || userInfo?.color || '#808080'; // デフォルト色
+              const isGroupActive = activeGroups.has(userId);
+
+              return (
+                <Grid xs={12} md={4} key={userId}>
+                  <Paper variant="outlined" sx={{ p: 2, borderTop: `4px solid ${userColor}`, opacity: isGroupActive ? 1 : 0.6 }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                       <Typography variant="h6">{userName} 向け要約</Typography>
+                       {/* ★ 要約削除ボタン ★ */}
+                       <IconButton 
+                          size="small" 
+                          onClick={() => handleDeleteSummary(userId)} 
+                          title="この要約を削除"
+                          disabled={saving}
+                       >
+                          <DeleteIcon fontSize="small" />
+                       </IconButton>
+                    </Box>
+                    {!isGroupActive && (
+                      <Chip label="割り当て削除済み" size="small" variant="outlined" sx={{ mb: 1 }} />
+                    )}
+                    <TextareaAutosize
+                      minRows={4}
+                      placeholder={`${userName} との会話要約を手動入力...`}
+                      style={{ width: '100%', fontFamily: 'inherit', fontSize: '1em', padding: '8px' }}
+                      value={summaryTexts[userId] || ''}
+                      onChange={(e) => handleSummaryTextChange(userId, e.target.value)}
+                      disabled={summaryLoading[userId] || saving}
+                    />
+                    <Button
+                      size="small"
+                      variant="contained"
+                      sx={{ mt: 1 }}
+                      onClick={() => handleGenerateDraft(userId, userName)}
+                      disabled={summaryLoading[userId] || saving || !isGroupActive} // ★ 割り当てがないとAI生成不可
+                      startIcon={summaryLoading[userId] ? <CircularProgress size={16} /> : <AiIcon />}
+                    >
+                      {summaryLoading[userId] ? '生成中...' : (isGroupActive ? 'AI生成' : 'AI生成不可')}
+                    </Button>
+                  </Paper>
+                </Grid>
+              );
+            })}
           </Grid>
         </Paper>
       )}

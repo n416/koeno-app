@@ -173,6 +173,9 @@ class AssignedRecording(BaseModel):
     caregiver_id: str
     memo_text: Optional[str]
     created_at: datetime.datetime
+    # ★★★ 以下2行を追加 ★★★
+    assignment_snapshot: Optional[Any] = None # (画面Cのスナップショット)
+    summary_drafts: Optional[Dict[str, str]] = None # (画面Cの要約)
 
 
 # -----------------------------------------------------------
@@ -425,7 +428,10 @@ async def get_assigned_recordings(
            recordings.c.recording_id,
            recordings.c.caregiver_id,
            recordings.c.memo_text,
-           recordings.c.created_at
+           recordings.c.created_at,
+           # ★★★ 以下2行を追加 ★★★
+           recordings.c.assignment_snapshot,
+           recordings.c.summary_drafts
         ).select_from(j).where(
             (recording_assignments.c.user_id == user_id) &
             # (v2.1 / Turn 94 修正)
