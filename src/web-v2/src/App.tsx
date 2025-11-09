@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-// ★★★ 修正: Link (RouterLink) と Button をインポート ★★★
-import { Routes, Route, useLocation, Link as RouterLink } from 'react-router-dom'; 
+// ★★★ 修正: Link (RouterLink) と useNavigate をインポート ★★★
+import { Routes, Route, useLocation, Link as RouterLink, useNavigate } from 'react-router-dom'; 
 import { AuthPage } from './pages/AuthPage';
 import { RecordPage } from './pages/RecordPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
@@ -27,8 +27,9 @@ import { lightTheme, darkTheme } from './theme';
 // ★★★ 修正: Button をインポート ★★★
 import { AppBar, Toolbar, Typography, IconButton, Button } from '@mui/material'; 
 import SettingsIcon from '@mui/icons-material/Settings';
-// ★★★ 修正: 管理者アイコンをインポート ★★★
+// ★★★ 修正: 管理者・ログアウトアイコンをインポート ★★★
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
+import LogoutIcon from '@mui/icons-material/Logout';
 // ★★★ 修正: AuthContext をインポート ★★★
 import { useAuth } from './contexts/AuthContext'; 
 
@@ -47,8 +48,9 @@ function App() {
     [prefersDarkMode],
   );
 
-  // ★★★ 修正: auth コンテキストを取得 ★★★
+  // ★★★ 修正: auth コンテキストと navigate を取得 ★★★
   const auth = useAuth();
+  const navigate = useNavigate();
 
   // --- v2.1 APIキーモーダル用 State ---
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -92,12 +94,19 @@ function App() {
   };
 
   // ★ v2.1 PCレビュー画面 (/review) でのみヘッダーを表示
-  const showPcHeader = location.pathname.startsWith('/review');
+  const showPcHeader = location.pathname.startsWith('/review') && auth.caregiverId;
+
+  // ★★★ 修正: ログアウトハンドラ ★★★
+  const handleLogout = () => {
+    auth.logout();
+    navigate('/review'); // Kiosk ログイン画面に戻る
+  };
 
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline /> 
       
+      {/* ★★★ 修正: auth.caregiverId がある場合のみヘッダーを表示 ★★★ */}
       {showPcHeader && (
         <AppBar position="static" color="default" elevation={1}>
           <Toolbar>
@@ -120,6 +129,12 @@ function App() {
             <IconButton color="inherit" onClick={() => setIsSettingsOpen(true)} title="Gemini APIキー設定">
               <SettingsIcon />
             </IconButton>
+            
+            {/* ★★★ 修正: ログアウトボタンを追加 ★★★ */}
+            <IconButton color="inherit" onClick={handleLogout} title="ログアウト">
+              <LogoutIcon />
+            </IconButton>
+
           </Toolbar>
         </AppBar>
       )}
