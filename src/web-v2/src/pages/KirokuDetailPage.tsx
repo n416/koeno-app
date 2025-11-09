@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-// ★★★ Gemini API クライアントをインポート ★★★
 import { GeminiApiClient } from '../lib/geminiApiClient'; 
 
 // MUI Components
@@ -11,7 +10,7 @@ import {
   Typography,
   Button,
   TextField,
-  Grid,
+  Grid, // ★ Grid をインポート
   Paper,
   List,
   ListItem,
@@ -21,7 +20,6 @@ import {
   Alert,
   Link as MuiLink
 } from '@mui/material';
-// ★★★ AiIcon をインポート ★★★
 import { AutoAwesome as AiIcon } from '@mui/icons-material';
 
 // (main.py CareRecordDetail に合わせた型)
@@ -30,21 +28,18 @@ interface CareRecordDetail {
     // (他はv2.1では表示しない)
 }
 
-// ★★★ 修正 (v2.1 / Turn 92) ★★★
 // (main.py UnassignedRecording / AssignedRecording に合わせた型)
 interface RecordingBase {
     recording_id: number;
     created_at: string;
     caregiver_id: string; 
-    memo_text: string | null; // ★ 修正 (Optional[str] -> string | null)
-    // ★★★ 以下2行を追加 (main.pyの修正に合わせる) ★★★
+    memo_text: string | null; 
     assignment_snapshot: any | null; 
     summary_drafts: Record<string, string> | null;
 }
 
 // .env から API のベース URL を取得
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
-// ★★★ /api が重複しないよう修正 ★★★
 const API_PATH = API_BASE_URL; // ★ VITE_API_BASE_URL (/api) をそのまま使う
 
 /**
@@ -56,12 +51,10 @@ export const KirokuDetailPage = () => {
   const navigate = useNavigate();
 
   const [recordText, setRecordText] = useState('');
-  // ★★★ 修正 (v2.1 / Turn 92) ★★★
   const [assignedList, setAssignedList] = useState<RecordingBase[]>([]);
   const [unassignedList, setUnassignedList] = useState<RecordingBase[]>([]);
   
   const [loading, setLoading] = useState(true);
-  // ★★★ AI生成中のローディング状態を追加 ★★★
   const [aiLoading, setAiLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
@@ -69,14 +62,12 @@ export const KirokuDetailPage = () => {
   const DUMMY_USERS: { [key: string]: string } = { 'u1': '佐藤 様', 'u2': '鈴木 様', 'u3': '高橋 様', 'u4': '田中 様' };
   const userName = DUMMY_USERS[userId || ''] || '不明な入居者';
   
-  // ★★★ 削除 (v2.1 / Turn 92) ★★★
-  // const assignedList = [ ... ]; // (ダミーデータを削除)
 
   // --- 1. データ取得 (画面Bのメインロジック) ---
   const fetchData = useCallback(async () => {
     if (!auth.caregiverId || !userId || !date) {
       setError("認証情報またはURLパラメータが不足しています。");
-      setLoading(false); // ★ ローディング解除
+      setLoading(false); 
       return;
     }
     setLoading(true);
@@ -94,8 +85,6 @@ export const KirokuDetailPage = () => {
       } else {
         throw new Error(`介護記録の取得失敗: ${detailRes.status}`);
       }
-
-      // ★★★ 修正 (v2.1 / Turn 92) ★★★
       
       // (2) 紐づけ済み録音リストを取得 (本実装)
       const assignedRes = await fetch(`${API_PATH}/assigned_recordings?user_id=${userId}&record_date=${date}`, { headers });
@@ -106,8 +95,6 @@ export const KirokuDetailPage = () => {
       setAssignedList(assignedData);
 
       // (3) 未紐づけの録音リストを取得 (修正済み)
-      // ★★★ v2.1 修正 (Turn 84) ★★★
-      // (GET /unassigned_recordings 呼び出しに record_date を追加)
       const unassignedRes = await fetch(`${API_PATH}/unassigned_recordings?caregiver_id=${auth.caregiverId}&record_date=${date}`, { headers });
       if (!unassignedRes.ok) {
         throw new Error(`未紐づけ録音の取得失敗: ${unassignedRes.status}`);
@@ -126,9 +113,7 @@ export const KirokuDetailPage = () => {
     fetchData();
   }, [fetchData]);
 
-  // --- 2. ダミーのAI連携 (v2.1仕様) ---
-
-  // ★★★ 「草案をAI生成」のロジックを本実装に置き換え ★★★
+  // --- 2. 「草案をAI生成」 (本実装) ---
   const handleGenerateDraft = async () => {
     if (!userId) {
       setError("入居者IDが不明です。");
@@ -186,9 +171,8 @@ ${combinedSummaries}
     setAiLoading(false);
   };
   
+  // --- 3. 記録保存 ---
   const handleSaveRecord = async () => {
-    //
-    // GM指示: v2.1では API (ダミー) -> v2.1最終仕様に基づき本実装
     if (!auth.caregiverId || !userId || !date) {
       alert("エラー: 認証情報がありません。");
       return;
@@ -224,7 +208,7 @@ ${combinedSummaries}
     setLoading(false);
   };
 
-  // --- 3. JSX ---
+  // --- 4. JSX ---
   const pageTitle = `${date} (${userName}) の介護記録`;
 
   return (
@@ -244,7 +228,6 @@ ${combinedSummaries}
             variant="contained"
             color="success"
             onClick={handleGenerateDraft}
-            // ★★★ disabled と startIcon を修正 ★★★
             disabled={loading || aiLoading}
             startIcon={aiLoading ? <CircularProgress size={20} color="inherit" /> : <AiIcon />}
           >
@@ -258,7 +241,6 @@ ${combinedSummaries}
           rows={10}
           fullWidth
           placeholder="ここに介護記録を入力します。&#10;[ 草案をAI生成 ] ボタンを押すと、下に表示されている「紐づけ済み録音」の内容に基づいてAIが草案を作成します。"
-          // ★★★ disabled を修正 ★★★
           disabled={loading || aiLoading}
         />
       </Paper>
@@ -266,21 +248,20 @@ ${combinedSummaries}
       {loading && <CircularProgress sx={{ mb: 2 }} />}
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
-      {/* --- 録音リスト --- */}
+      {/* --- 録音リスト (★ 構文修正) --- */}
       <Grid container spacing={3}>
-        {/* 紐づけ済み録音 */}
-        <Grid xs={12} md={6}> {/* ★ v2 Grid構文 (item削除) */}
+        {/* ★ 構文修正: size={{...}} を使用 */}
+        <Grid size={{ xs: 12, md: 6 }}> 
           <Paper sx={{ p: 2, width: '100%' }}>
             <Typography variant="h6" component="h3" gutterBottom>
               紐づけ済み録音
             </Typography>
             <List sx={{ maxHeight: '40vh', overflowY: 'auto' }}>
-              {/* ★★★ 修正 (v2.1 / Turn 92): ダミー -> State ★★★ */}
               {assignedList.map(rec => (
                 <ListItemButton 
                   key={rec.recording_id} 
                   onClick={() => navigate(`/review/adjust/${rec.recording_id}`)}
-                  disabled={loading || aiLoading} // ★ 修正
+                  disabled={loading || aiLoading} 
                 >
                   <ListItemText 
                     primary={`録音ID: ${rec.recording_id}`}
@@ -295,8 +276,8 @@ ${combinedSummaries}
           </Paper>
         </Grid>
         
-        {/* 未紐づけ録音 */}
-        <Grid xs={12} md={6}> {/* ★ v2 Grid構文 (item削除) */}
+        {/* ★ 構文修正: size={{...}} を使用 */}
+        <Grid size={{ xs: 12, md: 6 }}> 
           <Paper sx={{ p: 2, width: '100%' }}>
             <Typography variant="h6" component="h3" gutterBottom>
               未紐づけ録音 (全入居者共通)
@@ -306,7 +287,7 @@ ${combinedSummaries}
                 <ListItemButton 
                   key={rec.recording_id} 
                   onClick={() => navigate(`/review/adjust/${rec.recording_id}`)}
-                  disabled={loading || aiLoading} // ★ 修正
+                  disabled={loading || aiLoading} 
                 >
                   <ListItemText 
                     primary={`録音ID: ${rec.recording_id}`}
@@ -329,7 +310,7 @@ ${combinedSummaries}
           color="primary"
           size="large"
           onClick={handleSaveRecord}
-          disabled={loading || aiLoading} // ★ 修正
+          disabled={loading || aiLoading} 
           sx={{ fontSize: '1.1em', fontWeight: 'bold' }}
         >
           {loading ? '保存中...' : 'この内容で記録を保存'}

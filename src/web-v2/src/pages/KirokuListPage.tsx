@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -7,7 +7,7 @@ import {
   Container,
   Box,
   Typography,
-  Grid,
+  Grid, // ★ Grid をインポート
   Paper,
   List,
   ListItemButton,
@@ -213,12 +213,12 @@ export const KirokuListPage = () => {
   // --- 6. JSX ---
   return (
     <Container maxWidth="lg" sx={{ mt: 4 }}>
-      {/* ★ v2 Grid構文 (containerはデフォルト) */}
+      {/* ★ 構文修正: Grid container */}
       <Grid container spacing={3}>
         
         {/* --- メインコンテンツ (カレンダー) --- */}
-        {/* ★ v2 Grid構文 ('item' 削除, 'xs' 'md' をpropsとして渡す) */}
-        <Grid xs={12} md={9}>
+        {/* ★ 構文修正: size={{...}} を使用 */}
+        <Grid size={{ xs: 12, md: 9 }}>
           <Paper sx={{ p: 2, overflow: 'hidden' }}> {/* (overflow hidden) */}
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap' }}>
               <Typography variant="h5" sx={{ mr: 2 }}>2025年 11月</Typography>
@@ -242,8 +242,8 @@ export const KirokuListPage = () => {
         </Grid>
 
         {/* --- サイドバー (入居者リスト) --- */}
-        {/* ★ v2 Grid構文 ('item' 削除, 'xs' 'md' をpropsとして渡す) */}
-        <Grid xs={12} md={3}>
+        {/* ★ 構文修正: size={{...}} を使用 */}
+        <Grid size={{ xs: 12, md: 3 }}>
           <Paper sx={{ p: 2 }}>
             <Typography variant="h6" component="h2" gutterBottom>
               担当入居者
