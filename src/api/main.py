@@ -1,13 +1,20 @@
 import os
 import uvicorn
-# ★ Task 8.1: Depends, Header をインポート
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Body, Depends, Header
+# ★ List, Optional, Any, Dict, Query をインポート
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Body, Depends, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Optional
 import databases
 import sqlalchemy
 from pydantic import BaseModel
 import datetime # ★ datetime がインポートされていることを確認
+
+# ★★★ デバッグ用 (v2.1) ★★★
+import logging
+from fastapi.requests import Request
+from fastapi.responses import JSONResponse
+# ★★★ デバッグ用 (v2.1) ここまで ★★★
+
 
 # -----------------------------------------------------------
 # 1. 設定 (Task 1: DB基盤)
@@ -65,10 +72,26 @@ recordings = sqlalchemy.Table(
     sqlalchemy.Column("ai_status", sqlalchemy.String, default="pending", index=True),
     
     sqlalchemy.Column("transcription_result", sqlalchemy.JSON), # (List[Dict] を想定)
-    sqlalchemy.Column("summary_result", sqlalchemy.Text),
+    # ★★★ 削除 (v2.1) GM指示に基づき、要約は別テーブルで管理 ★★★
+    # sqlalchemy.Column("summary_result", sqlalchemy.Text),
     
     sqlalchemy.Column("created_at", sqlalchemy.DateTime), # (defaultはstartupで制御)
 )
+
+# ★★★ 新設 (v2.1) ★★★
+# GM指示: 画面Aのマーカー と 画面Bのテキストエリア 用のテーブル
+care_records = sqlalchemy.Table(
+    "care_records",
+    metadata,
+    sqlalchemy.Column("care_record_id", sqlalchemy.Integer, primary_key=True, autoincrement=True),
+    # (注: v2.1では user_id は "u1", "u2" などのハードコードされた文字列を想定)
+    sqlalchemy.Column("user_id", sqlalchemy.String, index=True), 
+    sqlalchemy.Column("record_date", sqlalchemy.String, index=True), # (例: "2025-11-09")
+    sqlalchemy.Column("final_text", sqlalchemy.Text),
+    sqlalchemy.Column("last_updated_by", sqlalchemy.String), # (保存した caregiver_id)
+    sqlalchemy.Column("updated_at", sqlalchemy.DateTime, default=datetime.datetime.now(datetime.UTC))
+)
+
 
 # -----------------------------------------------------------
 # 3. Pydanticモデル (APIリクエスト/レスポンス用)
@@ -80,14 +103,9 @@ class RecordingResponse(BaseModel):
     ai_status: str
     message: str
 
-class RecordSummary(BaseModel):
-    """ /my_records で返す一覧の形式 """
-    recording_id: int
-    ai_status: str
-    memo_text: Optional[str]
-    transcription_result: Optional[List[Dict[str, Any]]] # (Task 6 修正済み)
-    summary_result: Optional[str]
-    created_at: datetime.datetime
+# ★★★ 削除 (v2.1) ★★★
+# class RecordSummary(BaseModel):
+#    ... (旧ダッシュボード用モデル)
 
 # Task 7.1: /authenticate リクエストのボディ
 class AuthRequest(BaseModel):
@@ -102,8 +120,45 @@ class CaregiverInput(BaseModel):
 class CaregiverInfo(BaseModel):
     caregiver_id: str
     name: Optional[str]
-    # ★★★ v1.8 エラー修正: Optional[datetime.datetime] に変更 ★★★
     created_at: Optional[datetime.datetime]
+
+
+# ★★★ 新設 (v2.1) GM指示に基づく新API用モデル ★★★
+
+# POST /save_care_record のリクエストボディ
+class CareRecordInput(BaseModel):
+    user_id: str
+    record_date: str # (例: "2025-11-09")
+    final_text: str
+
+# GET /care_records のレスポンス
+class CareRecordDateList(BaseModel):
+    dates: List[str] # (例: ["2025-11-05", "2025-11-07"])
+
+# GET /care_record_detail のレスポンス
+class CareRecordDetail(BaseModel):
+    user_id: str
+    record_date: str
+    final_text: str
+    last_updated_by: Optional[str] = None # ★ Optionalを明示
+    updated_at: Optional[datetime.datetime] = None # ★ Optionalを明示
+
+# GET /unassigned_recordings のレスポンス形式
+class UnassignedRecording(BaseModel):
+    recording_id: int
+    caregiver_id: str
+    memo_text: Optional[str]
+    ai_status: str
+    # (文字起こし結果は重いので一覧には含めず、画面Cで別途取得)
+    created_at: datetime.datetime
+
+# ★★★ 新設 (v2.1 / Turn 85) ★★★
+# GET /recording_transcription/{id} のレスポンス形式
+class TranscriptionResponse(BaseModel):
+    recording_id: int
+    ai_status: str
+    # (v2.1では List[Dict] は Pydantic で Any として扱う)
+    transcription_result: Optional[Any] 
 
 
 # -----------------------------------------------------------
@@ -123,20 +178,26 @@ app.add_middleware(
 # 5. ライフサイクルイベント (DB接続/切断)
 # -----------------------------------------------------------
 
-# (注: Task 7 の指示書では @app.on_event を修正する指示はなかったため、
-#  DeprecationWarning は出ますが、ロジックは Task 7 修正版のままにします)
 @app.on_event("startup")
 async def startup():
     """ サーバー起動時にDBテーブルを作成し、接続する """
     engine = sqlalchemy.create_engine(DATABASE_URL)
-    # ★ (Task 8.1) administrators テーブルもここで作成される
+    # ★ (v2.1) care_records テーブルもここで作成される
     metadata.create_all(engine) 
     
     await database.connect()
-    print("データベースに接続し、テーブル定義を確認しました。")
+    print("--- データベースに接続し、テーブル定義を確認しました ---")
+
+    # ★★★ デバッグログ (v2.1) ★★★
+    print("--- 登録済みAPIルートの確認 ---")
+    for route in app.routes:
+        if hasattr(route, "path"):
+            # (uvicorn実行時のログと重複しないようインデント)
+            print(f"  -> PATH: {route.path}, METHODS: {getattr(route, 'methods', 'N/A')}")
+    print("--- ルート確認 完了 ---")
+    # ★★★ デバッグログ (v2.1) ここまで ★★★
 
     # ★★★ Task 1.1: ハードコードされたテストID登録ロジックを削除 ★★★
-    # (ここにあった 'pin-user', '1234', '3f:12:53:0d' の登録処理を削除)
     print("（Task 1.1: ハードコードされたテストIDの登録は行われません）")
 
 
@@ -150,10 +211,12 @@ async def shutdown():
 # 6. APIエンドポイント (一般ユーザー)
 # -----------------------------------------------------------
 
+# ★★★ v2.1 修正: /api プレフィックスを【削除】 ★★★
 @app.get("/")
 def read_root():
-    return {"status": "KOENO-APP API (Session-based) is running"}
+    return {"status": "KOENO-APP API (v2.1) is running"}
 
+# ★★★ v2.1 修正: /api プレフィックスを【削除】 ★★★
 @app.post("/upload_recording", response_model=RecordingResponse)
 async def upload_recording(
     audio_blob: UploadFile = File(...),
@@ -187,7 +250,7 @@ async def upload_recording(
         memo_text=memo_text,
         ai_status="pending",
         transcription_result=None,
-        summary_result=None,
+        # ★★★ 削除 (v2.1): summary_result の挿入を削除
         
         # ★★★ 修正: utcnow() -> now(datetime.UTC) ★★★
         created_at=datetime.datetime.now(datetime.UTC) 
@@ -205,23 +268,15 @@ async def upload_recording(
         raise HTTPException(status_code=500, detail=f"データベースへの保存に失敗しました: {e}")
 
 
-@app.get("/my_records", response_model=List[RecordSummary])
-async def get_my_records(
-    caregiver_id: str
-):
-    # (Task 6 修正済み: Pydanticモデルが List[Dict] に対応)
-    query = recordings.select().where(
-        (recordings.c.caregiver_id == caregiver_id) &
-        (recordings.c.ai_status == "completed")
-    ).order_by(recordings.c.created_at.desc())
-    
-    try:
-        completed_records = await database.fetch_all(query)
-        return completed_records
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"記録の取得に失敗しました: {e}")
+# ★★★ 削除 (v2.1) ★★★
+# @app.get("/my_records", response_model=List[RecordSummary])
+# async def get_my_records(
+#     caregiver_id: str
+# ):
+#    ... (旧ダッシュボード用のAPI)
 
 # Task 7.1 (Task 7.4 バグ修正済み)
+# ★★★ v2.1 修正: /api プレフィックスを【削除】 ★★★
 @app.post("/authenticate")
 async def authenticate_caregiver(
     auth_request: AuthRequest = Body(...)
@@ -245,7 +300,151 @@ async def authenticate_caregiver(
         raise HTTPException(status_code=401, detail="Caregiver ID not found")
 
 # -----------------------------------------------------------
-# 7. ★★★ Task 8.1: 管理者用 認可Dependency ★★★
+# 7. ★★★ 新設 (v2.1): PCレビュー画面用 API ( /api プレフィックス【無し】) ★★★
+# -----------------------------------------------------------
+
+@app.get("/care_records", response_model=CareRecordDateList)
+async def get_care_record_dates(
+    user_id: str = Query(...)
+):
+    """ [v2.1] 画面A用: 特定の入居者の介護記録が「存在する日付」のリストを取得 """
+    try:
+        query = sqlalchemy.select(care_records.c.record_date).where(
+            care_records.c.user_id == user_id
+        ).distinct()
+        results = await database.fetch_all(query)
+        dates = [row.record_date for row in results]
+        return {"dates": dates}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"記録日付の取得に失敗: {e}")
+
+
+@app.get("/care_record_detail", response_model=CareRecordDetail)
+async def get_care_record_detail(
+    user_id: str = Query(...),
+    record_date: str = Query(...) # (例: "2025-11-09")
+):
+    """ [v2.1] 画面B用: 特定の入居者・日付の介護記録テキストを取得 """
+    try:
+        query = care_records.select().where(
+            (care_records.c.user_id == user_id) &
+            (care_records.c.record_date == record_date)
+        ).order_by(care_records.c.updated_at.desc()).limit(1) # 常に最新のものを1件
+        
+        result = await database.fetch_one(query)
+        
+        # ★★★★★ 修正 (Turn 78) ★★★★★
+        # GMのご指摘 [n46_p1_55] に従い、404を返さず200 OKと空のデータを返す
+        if not result:
+            print(f"[API /care_record_detail] 記録なし (user_id: {user_id}, date: {record_date})。デフォルト値を返します。")
+            return CareRecordDetail(
+                user_id=user_id,
+                record_date=record_date,
+                final_text="", # (空のテキスト)
+                last_updated_by=None,
+                updated_at=None
+            )
+        
+        # Pydanticモデルが Optional なので、None の場合も許容される
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"記録詳細の取得に失敗: {e}")
+
+
+@app.post("/save_care_record", status_code=201)
+async def save_care_record(
+    record_input: CareRecordInput = Body(...),
+    # (PC版Kioskからの呼び出しを想定し、AuthContextからIDを取得)
+    caller_id: str = Header(..., alias="X-Caller-ID")
+):
+    """ [v2.1] 画面B用: 介護記録テキストを保存 (UPSERT: 更新または挿入) """
+    try:
+        # 1. 既存の記録があるか確認
+        query_check = care_records.select().where(
+            (care_records.c.user_id == record_input.user_id) &
+            (care_records.c.record_date == record_input.record_date)
+        )
+        existing_record = await database.fetch_one(query_check)
+        
+        current_time = datetime.datetime.now(datetime.UTC)
+        
+        if existing_record:
+            # 2a. 存在すれば UPDATE
+            query_update = care_records.update().where(
+                care_records.c.care_record_id == existing_record.care_record_id
+            ).values(
+                final_text=record_input.final_text,
+                last_updated_by=caller_id,
+                updated_at=current_time
+            )
+            await database.execute(query_update)
+            return {"status": "updated"}
+        else:
+            # 2b. 存在しなければ INSERT
+            query_insert = care_records.insert().values(
+                user_id=record_input.user_id,
+                record_date=record_input.record_date,
+                final_text=record_input.final_text,
+                last_updated_by=caller_id,
+                updated_at=current_time
+            )
+            await database.execute(query_insert)
+            return {"status": "created"}
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"記録の保存に失敗: {e}")
+
+
+@app.get("/unassigned_recordings", response_model=List[UnassignedRecording])
+async def get_unassigned_recordings(
+    # ★★★ v2.1 修正 (Turn 82) ★★★
+    caregiver_id: str = Query(...),
+    record_date: str = Query(...) # (例: "2025-11-09")
+):
+    """ [v2.1] 画面B用: 未紐づけ録音リストを取得 """
+    try:
+        # ★★★ v2.1 修正 (Turn 82) ★★★
+        # (GM指示: 当該日のデータのみに絞り込む)
+        # (SQLiteはDATETIME型を文字列として比較するため、DATE()関数で日付部分のみを抽出)
+        query = recordings.select().where(
+            (recordings.c.caregiver_id == caregiver_id) &
+            (sqlalchemy.func.date(recordings.c.created_at) == record_date)
+        ).order_by(recordings.c.created_at.desc())
+        
+        results = await database.fetch_all(query)
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"録音リストの取得に失敗: {e}")
+
+# ★★★ 新設 (v2.1 / Turn 85) ★★★
+@app.get("/recording_transcription/{recording_id}", response_model=TranscriptionResponse)
+async def get_recording_transcription(
+    recording_id: int,
+    caller_id: str = Header(..., alias="X-Caller-ID") # (認証用)
+):
+    """ [v2.1] 画面C用: 単一の録音IDから文字起こし結果(JSON)を取得 """
+    try:
+        query = recordings.select().where(
+            recordings.c.recording_id == recording_id
+        )
+        result = await database.fetch_one(query)
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="該当の録音IDが見つかりません。")
+            
+        # (念のため、呼び出し元が所有者か確認)
+        if result.caregiver_id != caller_id:
+             raise HTTPException(status_code=403, detail="この録音データへのアクセス権がありません。")
+
+        return result # (Pydanticが自動で整形)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"文字起こしデータの取得に失敗: {e}")
+
+
+# -----------------------------------------------------------
+# 8. ★★★ Task 8.1: 管理者用 認可Dependency ★★★ ( /api プレフィックス【無し】)
 # -----------------------------------------------------------
 
 async def verify_admin(x_caller_id: str = Header(None)):
@@ -274,7 +473,7 @@ async def verify_admin(x_caller_id: str = Header(None)):
 
 
 # -----------------------------------------------------------
-# 8. ★★★ Task 1.2 & 8.1: 管理者用CRUDエンドポイント (認可適用) ★★★
+# 9. ★★★ Task 1.2 & 8.1: 管理者用CRUDエンドポイント ( /api プレフィックス【無し】) ★★★
 # -----------------------------------------------------------
 
 @app.get("/admin/caregivers", response_model=List[CaregiverInfo])
@@ -346,11 +545,28 @@ async def admin_delete_caregiver(
         raise HTTPException(status_code=500, detail=f"IDの削除に失敗しました: {e}")
 
 
+# ★★★ デバッグログ (v2.1) ★★★
+# どのルートにも一致しなかったリクエストをすべてキャッチ
+# (注: このハンドラは、他のどの @app ルートよりも「最後」に定義する必要があります)
+# ★★★ v2.1 修正: methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"] を追加 ★★★
+@app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"])
+async def log_unmatched_requests(request: Request, full_path: str):
+    print(f"--- !!! 404 未定義ルートへのアクセス !!! ---")
+    print(f"PATH: /{full_path}")
+    print(f"METHOD: {request.method}")
+    print(f"HEADERS: {request.headers}")
+    print(f"--------------------------------------")
+    return JSONResponse(
+        status_code=404,
+        content={"detail": "Not Found (PMAI Debug: Endpoint not defined)", "requested_path": f"/{full_path}"}
+    )
+
+
 # -----------------------------------------------------------
-# 9. サーバーの起動 (開発用)
+# 10. サーバーの起動 (開発用)
 # -----------------------------------------------------------
 if __name__ == "__main__":
-    print("開発サーバーを http://127.0.0.1:8000 で起動します")
+    print("開発サーバー(v2.1)を http://127.0.0.1:8000 で起動します")
     
     # ★ Task 7 修正: ngrok プロキシ対応
     uvicorn.run(

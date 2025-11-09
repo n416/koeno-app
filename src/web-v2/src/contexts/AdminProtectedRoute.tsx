@@ -42,5 +42,5 @@ export const AdminProtectedRoute = () => {
   }
   
   // 4. 権限なし
-  return <Navigate to="/review/dashboard" replace />;
+  return <Navigate to="/review/list" replace />;
 };

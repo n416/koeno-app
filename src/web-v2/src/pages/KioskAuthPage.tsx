@@ -14,8 +14,9 @@ import { Nfc as NfcIcon } from '@mui/icons-material'; // アイコン
 
 // .env から API のベース URL を取得 ( "/api" または undefined が入る)
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
-// ★ 修正: 相対パス (プロキシ 経由) にする
-const AUTH_URL = `${API_BASE_URL}/authenticate`; // -> /api/authenticate
+// ★★★ v2.1 修正: /api が重複しないよう修正 ★★★
+const AUTH_URL = (API_BASE_URL.endsWith('/api') ? API_BASE_URL : `${API_BASE_URL}/api`) + '/authenticate';
+
 
 /**
  * Task 6.1 (Task 7.4 修正): PC版 認証ページ (KioskAuthPage)
@@ -69,7 +70,7 @@ export const KioskAuthPage = () => {
             console.log(`[KioskAuth] 認証成功: ${trimmedId}`);
             setError('');
             auth.login(trimmedId); // 認証が通ったのでグローバル状態にセット
-            navigate('/review/dashboard'); // ダッシュボードへ
+            navigate('/review/list'); // ★ v2.1: 新リスト画面へ
           } else {
             // ★ API認証失敗 (401 Unauthorized など)
             const errMsg = await response.text();

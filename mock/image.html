@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>KOENO-APP v2.1 (画面C: 手動チャット調整 v15)</title>
+    <style>
+        /* (CSSはv15から変更ありません) */
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f6f8; padding: 20px; color: #333; margin: 0; }
+        
+        /* ★ v15改: ヘッダーを追加 */
+        .header {
+            background: #fff;
+            padding: 10px 20px;
+            border-bottom: 1px solid #ddd;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 { margin: 0; font-size: 1.5em; }
+        .header a { color: #007bff; text-decoration: none; }
+        
+        h2 { border-bottom: 2px solid #007bff; padding-bottom: 5px; color: #007bff; margin-top: 0; }
+        .controls-area { margin-bottom: 20px; background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .controls-area button { padding: 8px 15px; cursor: pointer; border: 0; border-radius: 20px; font-weight: 600; margin-right: 10px; background: #007bff; color: white; }
+        .transcript-table { width: 100%; border-collapse: collapse; background: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border-radius: 8px; overflow: hidden; margin-bottom: 20px; }
+        .transcript-table th, .transcript-table td { padding: 12px 15px; text-align: left; vertical-align: top; border-bottom: 1px solid #eee; }
+        .transcript-table th { background: #f9f9f9; font-weight: 600; }
+        .transcript-table .speaker { font-weight: bold; color: #0056b3; }
+        .transcript-table .time { font-size: 0.9em; color: #666; }
+        .assignment-row { cursor: pointer; }
+        .assignment-row td:first-child { cursor: grab; }
+        .assignment-row:active td:first-child { cursor: grabbing; opacity: 0.8; }
+        .assignment-row td { background: #6c757d; color: white; font-weight: bold; }
+        .transcript-row { cursor: pointer; }
+        .transcript-row.drag-over { background-color: #e0f0ff !important; border-top: 2px solid #007bff; }
+        .status-cell { width: 80px; text-align: center; vertical-align: middle !important; }
+        .none-indicator { display: none; font-size: 0.9em; font-weight: bold; color: #6c757d; }
+        .transcript-row.assigned-Cap { }
+        .transcript-row.assigned-None { text-decoration: line-through; color: #999; background: #f5f5f5 !important; }
+        .transcript-row.assigned-None .none-indicator { display: block; }
+        .transcript-row.assigned-None:hover { background: #eaeaea !important; }
+        .delete-cell { width: 60px; padding: 0 !important; text-align: center; vertical-align: middle !important; }
+        .delete-btn { display: none; padding: 4px 8px; font-size: 0.8em; background: #dc3545; color: white; border: 0; border-radius: 4px; cursor: pointer; }
+        .assignment-row.active-assignment .delete-btn { display: block; }
+        #summary-section { display: none; }
+        #summary-area-container { margin-bottom: 20px; background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        #summary-area { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; }
+        .summary-box { background-color: #f9f9f9; border-radius: 8px; padding: 16px; border-top: 4px solid; }
+        .summary-box h4 { margin: 0 0 10px 0; }
+        .summary-input-area { display: flex; align-items: flex-start; gap: 8px; }
+        .summary-input-area textarea { flex-grow: 1; height: 80px; box-sizing: border-box; border-radius: 4px; border: 1px solid #ccc; font-size: 1em; font-family: inherit; }
+        .ai-generate-btn { padding: 8px 12px; font-weight: 600; background: #6c757d; color: white; border: 0; border-radius: 4px; cursor: pointer; height: 80px; }
+        .ai-generate-btn:hover { background: #5a6268; }
+        #approve-button { background: #007bff; color: white; padding: 12px 25px; font-size: 1.1em; border: 0; border-radius: 8px; cursor: pointer; }
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 100; justify-content: center; align-items: center; }
+        .modal-window { background: white; padding: 20px; border-radius: 8px; width: 90%; max-width: 500px; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
+        .modal-window input[type="search"] { width: 100%; padding: 10px; font-size: 1.1em; box-sizing: border-box; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px; }
+        .modal-list { list-style: none; padding: 0; margin: 0; max-height: 300px; overflow-y: auto; border: 1px solid #eee; }
+        .modal-list li { padding: 12px 15px; border-bottom: 1px solid #eee; cursor: pointer; }
+        .modal-list li:hover { background: #e0f0ff; }
+        .modal-list li:last-child { border-bottom: 0; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>録音の手動調整 (録音ID: 002)</h1>
+        <a href="kirokudetail.html">← 介護記録詳細に戻る</a>
+    </div>
+
+    <h2>割り当て</h2>
+    <div class="controls-area">
+        <span>1. 割り当てグループを追加:</span>
+        <button onclick="openModal()">[ + 新規割り当てを追加 ]</button>
+        <p style="font-size: 0.9em; color: #555; margin-top: 10px;">
+            2. 追加された割り当て行をD&Dで配置してください。<br>
+            3. 不要な行は、行自体をクリックすると「非表示✅」がトグル（ON/OFF）されます。
+        </p>
+    </div>
+
+    <h2>発話テーブル</h2>
+    <table class="transcript-table" id="transcript-table">
+        <thead>
+            <tr>
+                <th style="width: 80px;">状態</th> 
+                <th>話者(AI)</th>
+                <th>時間</th>
+                <th>内容</th>
+                <th style="width: 60px;">操作</th> 
+            </tr>
+        </thead>
+        <tbody id="transcript-body">
+            </tbody>
+    </table>
+
+    <div id="summary-section">
+        <h2>要約</h2>
+        <div id="summary-area-container">
+            <div id="summary-area">
+                </div>
+        </div>
+
+        <div style="text-align: right;">
+            <button id="approve-button"
+                onclick="location.href='kirokudetail.html'">
+                この割り当てで承認する
+            </button>
+            </div>
+    </div>
+
+    <div class="modal-overlay" id="user-modal" onclick="closeModal()">
+        <div class="modal-window" onclick="event.stopPropagation()">
+            <h3>割り当て先を選択</h3>
+            <input type="search" id="user-search" placeholder="利用者名で検索..." onkeyup="filterUsers()">
+            <ul class="modal-list" id="user-list">
+                </ul>
+        </div>
+    </div>
+
+
+    <script>
+        // --- (v15のスクリプト: 省略なし・構文エラー修正済み) ---
+        
+        const tableBody = document.getElementById('transcript-body');
+        const summarySection = document.getElementById('summary-section'); 
+        const summaryArea = document.getElementById('summary-area');
+        let draggedAssignment = null;
+        let assignmentCounter = 0;
+
+        // --- ダミーデータ ---
+        const DUMMY_USERS = [
+            { id: 'u1', name: '佐藤 様', color: '#28a745' },
+            { id: 'u2', name: '鈴木 様', color: '#17a2b8' },
+            { id: 'u3', name: '高橋 様', color: '#ffc107' },
+            { id: 'u4', name: '田中 様', color: '#fd7e14' },
+            { id: 'u5', name: '伊藤 様', color: '#6f42c1' },
+            { id: 'u6', name: '渡辺 様', color: '#dc3545' },
+        ];
+
+        // (画面C用のダミー会話)
+        const DUMMY_TRANSCRIPTS_C = [
+            { speaker: 'SPEAKER_00', time: '0:02 - 0:04', text: '（...環境音...）' },
+            { speaker: 'SPEAKER_00', time: '0:05 - 0:08', text: '鈴木さん、お部屋の掃除に来ましたよ。' },
+            { speaker: 'SPEAKER_01', time: '0:09 - 0:10', text: 'ああ、お願い。' },
+            { speaker: 'SPEAKER_00', time: '0:12 - 0:15', text: '（...掃除機音...）' },
+            { speaker: 'SPEAKER_00', time: '0:16 - 0:18', text: '佐藤さん、お昼ですよー。' },
+            { speaker: 'SPEAKER_02', time: '0:19 - 0:20', text: 'はーい。' },
+        ];
+
+        // --- 起動時処理 ---
+        window.onload = () => {
+            // 発話行を生成
+            DUMMY_TRANSCRIPTS_C.forEach((seg, i) => {
+                const row = document.createElement('tr');
+                row.className = 'transcript-row unassigned';
+                row.id = `row-${i}`;
+                row.onclick = () => toggleNone(row);
+                row.innerHTML = `
+                    <td class="status-cell">
+                        <span class="none-indicator">非表示✅</span>
+                    </td>
+                    <td class="speaker">${seg.speaker}</td>
+                    <td class="time">${seg.time}</td>
+                    <td class="text">${seg.text}</td>
+                    <td></td>
+                `;
+                tableBody.appendChild(row);
+                addDropEvents(row);
+            });
+            
+            // モーダルのリストを生成
+            const userList = document.getElementById('user-list');
+            DUMMY_USERS.forEach(user => {
+                const li = document.createElement('li');
+                li.textContent = user.name;
+                li.onclick = () => selectUser(user);
+                userList.appendChild(li);
+            });
+        };
+
+        // --- モーダル関数 (v12) ---
+        function openModal() { document.getElementById('user-modal').style.display = 'flex'; document.getElementById('user-search').focus(); }
+        function closeModal() { document.getElementById('user-modal').style.display = 'none'; document.getElementById('user-search').value = ''; filterUsers(); }
+        function filterUsers() {
+            const query = document.getElementById('user-search').value.toLowerCase();
+            document.querySelectorAll('#user-list li').forEach(li => {
+                const name = li.textContent.toLowerCase();
+                li.style.display = name.includes(query) ? 'block' : 'none';
+            });
+        }
+        function selectUser(user) { addAssignment(user); closeModal(); }
+
+        // --- 割り当て行 (D&D) 関数 (v13準拠) ---
+        
+        function addAssignment(user) { 
+            assignmentCounter++;
+            const newRow = document.createElement('tr');
+            newRow.id = `assignment-${assignmentCounter}`;
+            newRow.className = `assignment-row`;
+            newRow.draggable = true;
+            newRow.dataset.group = user.id;
+            newRow.dataset.groupName = user.name;
+            newRow.dataset.groupColor = user.color;
+            const text = `▼ ${user.name} グループ (G${assignmentCounter}) ▼`;
+            
+            newRow.innerHTML = `
+                <td colspan="4">${text}</td>
+                <td class="delete-cell">
+                    <button class="delete-btn" onclick="deleteAssignment(this)">削除</button>
+                </td>
+            `;
+            
+            newRow.querySelector('td').style.backgroundColor = user.color;
+            tableBody.prepend(newRow);
+            addDragEvents(newRow);
+            newRow.addEventListener('click', toggleDeleteButton);
+            recalculateAssignments(); 
+        }
+        
+        function addDragEvents(row) {
+            row.addEventListener('dragstart', (e) => {
+                row.classList.remove('active-assignment');
+                draggedAssignment = row;
+                e.dataTransfer.effectAllowed = 'move';
+            });
+            row.addEventListener('dragend', (e) => {
+                draggedAssignment = null;
+                clearDragOver();
+                recalculateAssignments(); 
+            });
+        }
+        
+        function addDropEvents(row) { 
+            row.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                if (draggedAssignment) {
+                    clearDragOver();
+                    row.classList.add('drag-over');
+                }
+            });
+            
+            row.addEventListener('dragleave', (e) => {
+                row.classList.remove('drag-over');
+            });
+            
+            row.addEventListener('drop', (e) => {
+                e.preventDefault();
+                if (draggedAssignment) {
+                    tableBody.insertBefore(draggedAssignment, row);
+                    clearDragOver();
+                }
+            });
+        }
+        
+        function clearDragOver() {
+            document.querySelectorAll('.transcript-row.drag-over').forEach(r => {
+                r.classList.remove('drag-over');
+            });
+        }
+        
+        // --- 削除関数 (v13準拠) ---
+        
+        function toggleDeleteButton(event) {
+            if (event.target.tagName === 'BUTTON' || draggedAssignment) return;
+            const clickedRow = event.currentTarget;
+            document.querySelectorAll('.assignment-row.active-assignment').forEach(row => {
+                if (row !== clickedRow) {
+                    row.classList.remove('active-assignment');
+                }
+            });
+            clickedRow.classList.toggle('active-assignment');
+        }
+
+        function deleteAssignment(button) {
+            event.stopPropagation(); 
+            const row = button.closest('.assignment-row');
+            if (row) {
+                row.remove();
+                recalculateAssignments(); 
+            }
+        }
+        
+        // --- v14 バグ修正ロジック ---
+
+        function toggleNone(row) {
+            if (row.classList.contains('assignment-row')) return;
+            row.classList.toggle('assigned-None');
+            row.classList.toggle('unassigned', !row.classList.contains('assigned-None'));
+            recalculateAssignments(); 
+        }
+        
+        function recalculateAssignments() {
+            let currentGroup = null; 
+            const activeGroups = new Map(); 
+            
+            tableBody.querySelectorAll('tr').forEach(row => {
+                if (row.classList.contains('assignment-row')) {
+                    currentGroup = row.dataset;
+                    activeGroups.set(currentGroup.group, currentGroup); 
+                } else if (row.classList.contains('transcript-row')) {
+                    
+                    row.classList.remove('assigned-Cap');
+                    row.style.backgroundColor = ''; 
+                    
+                    if (row.classList.contains('assigned-None')) {
+                        // 「不要」が最優先
+                    } else if (currentGroup) {
+                        row.classList.add('assigned-Cap');
+                        row.style.backgroundColor = hexToRgba(currentGroup.groupColor, 0.1);
+                    } else {
+                        // (unassigned は toggleNone が制御)
+                    }
+                }
+            });
+            
+            updateSummaryArea(activeGroups);
+        }
+        
+        // v15: 要約欄の更新
+        function updateSummaryArea(activeGroups) {
+            summaryArea.innerHTML = '';
+            
+            if (activeGroups.size === 0) {
+                summarySection.style.display = 'none';
+                return;
+            }
+
+            summarySection.style.display = 'block';
+            
+            activeGroups.forEach(group => {
+                summaryArea.appendChild(createSummaryBox(group));
+            });
+        }
+        
+        function createSummaryBox(group) {
+            const box = document.createElement('div');
+            box.id = `summary-${group.group}`;
+            box.className = 'summary-box';
+            box.style.borderTopColor = group.groupColor; 
+            
+            const h4 = document.createElement('h4');
+            h4.textContent = `${group.groupName} 向け要約`;
+            
+            const textareaContainer = document.createElement('div');
+            textareaContainer.className = 'summary-input-area';
+            
+            const textarea = document.createElement('textarea');
+            textarea.placeholder = `${group.groupName} との会話要約を手動入力...`;
+            
+            const aiButton = document.createElement('button');
+            aiButton.className = 'ai-generate-btn';
+            aiButton.textContent = 'AI生成';
+            aiButton.onclick = () => { 
+                alert(`（「${group.groupName}」の会話ブロック（${group.group}）からAI要約を生成します）`); 
+            };
+            
+            textareaContainer.appendChild(textarea);
+            textareaContainer.appendChild(aiButton);
+            
+            box.appendChild(h4);
+            box.appendChild(textareaContainer);
+            return box;
+        }
+        
+        // 色を薄くするヘルパー (v12)
+        function hexToRgba(hex, alpha) {
+            const r = parseInt(hex.slice(1, 3), 16),
+                  g = parseInt(hex.slice(3, 5), 16),
+                  b = parseInt(hex.slice(5, 7), 16);
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        }
+
+    </script>
+</body>
+</html>

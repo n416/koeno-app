@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>KOENO-APP v2.1 (画面B: 介護記録詳細)</title>
+    <style>
+        /* (CSSはvBから変更ありません) */
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            background: #f4f6f8; 
+            padding: 20px; 
+            color: #333; 
+            margin: 0;
+        }
+        h2 { 
+            border-bottom: 2px solid #007bff; 
+            padding-bottom: 5px; 
+            color: #007bff;
+            margin-top: 0;
+        }
+        .header {
+            background: #fff;
+            padding: 10px 20px;
+            border-bottom: 1px solid #ddd;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 { margin: 0; font-size: 1.5em; }
+        .header a { color: #007bff; text-decoration: none; }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .record-editor {
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            margin-bottom: 20px;
+        }
+        .record-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .ai-generate-btn {
+            padding: 10px 20px;
+            font-size: 1em;
+            font-weight: 600;
+            background: #28a745;
+            color: white;
+            border: 0;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        .ai-generate-btn:hover { background: #218838; }
+        .record-textarea {
+            width: 100%;
+            height: 250px;
+            box-sizing: border-box;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            font-size: 1em;
+            font-family: inherit;
+            padding: 10px;
+        }
+        .recording-lists {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .list-container {
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .list-container h3 {
+            margin-top: 0;
+            border-bottom: 2px solid #ccc;
+            padding-bottom: 5px;
+        }
+        .recording-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            max-height: 40vh;
+            overflow-y: auto;
+        }
+        .recording-item {
+            padding: 15px;
+            border: 1px solid #eee;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #fff;
+        }
+        .recording-item:hover {
+            background: #e0f0ff;
+            border-color: #007bff;
+        }
+        .recording-item strong {
+            font-size: 1.1em;
+            display: block;
+        }
+        .recording-item span {
+            font-size: 0.9em;
+            color: #555;
+            margin-right: 15px;
+        }
+        .approve-button-area {
+            text-align: right;
+            margin-top: 20px;
+        }
+        .approve-button {
+            background: #007bff;
+            color: white;
+            padding: 12px 25px;
+            font-size: 1.1em;
+            border: 0;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        .approve-button:hover {
+            background: #0069d9;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="header">
+        <h1>介護記録詳細</h1>
+        <a href="kirokulist.html">← 介護記録一覧に戻る</a>
+        </div>
+
+    <div class="container">
+
+        <div class="record-editor">
+            <div class="record-header">
+                <h2>11/9 (日) 佐藤 様 の介護記録</h2>
+
+                <button class="ai-generate-btn" onclick="generateDraft()">
+                    [ 草案をAI生成 ]
+                </button>
+            </div>
+
+            <textarea id="record-textarea" class="record-textarea" placeholder="ここに介護記録を入力します。&#10;[ 草案をAI生成 ] ボタンを押すと、下に表示されている「紐づけ済み録音」の内容に基づいてAIが草案を作成します。"></textarea>
+        </div>
+
+        <div class="recording-lists">
+
+            <div class="list-container">
+                <h3>紐づけ済み録音</h3>
+                <ul class="recording-list" id="assigned-list">
+                    <li class="recording-item" onclick="location.href='image.html'">
+                        <strong>録音ID: 001</strong>
+                        <span>録音日時: 11/09 08:05</span>
+                        <span>担当: 自分</span>
+                    </li>
+                    </ul>
+            </div>
+
+            <div class="list-container">
+                <h3>未紐づけ録音 (全入居者共通)</h3>
+                <ul class="recording-list" id="unassigned-list">
+                    <li class="recording-item" onclick="location.href='image.html'">
+                        <strong>録音ID: 002</strong>
+                        <span>録音日時: 11/09 10:30</span>
+                        <span>担当: 自分</span>
+                    </li>
+                    <li class="recording-item" onclick="location.href='image.html'">
+                        <strong>録音ID: 003</strong>
+                        <span>録音日時: 11/09 14:15</span>
+                        <span>担当: 自分</span>
+                    </li>
+                    </ul>
+            </div>
+        </div>
+
+        <div class="approve-button-area">
+            <button class="approve-button" onclick="alert('（この介護記録（テキストエリアの内容）を保存します）')">
+                この内容で記録を保存
+            </button>
+        </div>
+
+    </div>
+
+    <script>
+        // ★ vB: AI草案生成（ダミー）
+        function generateDraft() {
+            const textarea = document.getElementById('record-textarea');
+            textarea.value = "AIが草案を生成中...\n";
+
+            // ダミーの待機
+            setTimeout(() => {
+                textarea.value = `【佐藤 様 - 11/9 介護記録草案】
+・08:05: （録音ID: 001より）
+　- 介護士: 「おはようございます。佐藤さん、今朝の調子はいかがですか？」
+　- 佐藤様: 「うーん、まあまあだよ。」
+　- 観察: やや傾眠傾向だが、呼びかけには応答あり。
+
+（ここに、紐づけられた全録音の要約が生成される）
+`;
+            }, 1000);
+        }
+    </script>
+</body>
+</html>

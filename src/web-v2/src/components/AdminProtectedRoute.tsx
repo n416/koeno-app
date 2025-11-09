@@ -8,7 +8,7 @@ import { Box, CircularProgress, Container, Typography } from '@mui/material';
  * 1. `checkAdminStatus()` を呼び出し、権限を確認
  * 2. 確認中: ローディング表示
  * 3. true: 子ルート (<Outlet />) を表示
- * 4. false: ダッシュボード (/review/dashboard) にリダイレクト
+ * 4. false: 新リスト画面 (/review/list) にリダイレクト (v2.1)
  */
 export const AdminProtectedRoute = () => {
   const auth = useAuth();
@@ -43,5 +43,7 @@ export const AdminProtectedRoute = () => {
   }
   
   // 4. 権限なし (auth.isAdmin === false)
-  return <Navigate to="/review/dashboard" replace />;
-};
+  // ★★★ v2.1 修正 ★★★
+  // リダイレクト先を /review/dashboard から /review/list に変更
+  return <Navigate to="/review/list" replace />;
+}; // ★★★ 終端の }; を確認してください ★★★

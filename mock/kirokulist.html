@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>KOENO-APP v2.1 (画面A: 介護記録一覧 v19)</title>
+    <style>
+        /* (CSSはv18から一部変更) */
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            background: #f4f6f8; 
+            padding: 20px; 
+            color: #333; 
+            margin: 0;
+        }
+        h2 { 
+            border-bottom: 2px solid #007bff; 
+            padding-bottom: 5px; 
+            color: #007bff;
+            margin-top: 0;
+        }
+        .header {
+            background: #fff;
+            padding: 10px 20px;
+            border-bottom: 1px solid #ddd;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 { margin: 0; font-size: 1.5em; }
+        .header span { font-size: 0.9em; }
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 300px;
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .main-content {
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .sidebar {
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        
+        .calendar-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .calendar-nav {
+            display: flex;
+            align-items: center;
+        }
+        .calendar-nav button {
+            font-size: 1.5em;
+            padding: 0 15px;
+            background: none;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 0 10px;
+        }
+        .calendar-nav h3 { margin: 0; font-size: 1.8em; }
+        
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 1px;
+            background: #ddd;
+            border: 1px solid #ddd;
+        }
+        .calendar-grid div {
+            background: #fff;
+            min-height: 100px;
+            padding: 8px;
+            font-weight: 500;
+        }
+        .calendar-grid .day-header {
+            min-height: auto;
+            text-align: center;
+            background: #f9f9f9;
+            font-weight: 600;
+            padding: 10px 0;
+        }
+        .calendar-grid .day {
+             cursor: pointer;
+             transition: background 0.2s;
+        }
+        .calendar-grid .day:hover {
+             background: #e0f0ff;
+        }
+        .calendar-grid .day.other-month {
+            background: #f7f7f7;
+            color: #aaa;
+            cursor: default;
+        }
+        .calendar-grid .day.today {
+            background: #fff8e1;
+        }
+        .calendar-grid .day.active {
+            background: #007bff;
+            color: white;
+            font-weight: bold;
+        }
+        .calendar-grid .day.active:hover {
+             background: #0069d9;
+        }
+        .day-marker {
+            display: block;
+            background: #28a745;
+            color: white;
+            padding: 4px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            text-align: center;
+            margin-top: 8px;
+            display: none;
+        }
+        .calendar-grid .day.active .day-marker {
+            background: #fff;
+            color: #28a745;
+        }
+        
+        /* --- 入居者リスト --- */
+        .user-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+        .user-list-item {
+            padding: 15px;
+            border: 1px solid #eee;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #fff;
+        }
+        .user-list-item:hover {
+            background: #e0f0ff;
+            border-color: #007bff;
+        }
+        .user-list-item.active {
+            background: #007bff;
+            color: white;
+            border-color: #0056b3;
+        }
+        .user-name {
+            font-weight: 600;
+            font-size: 1.1em;
+            display: block;
+            margin-bottom: 5px;
+        }
+        .user-list-item.active .user-name {
+            color: white;
+        }
+        
+        /* ★ v19: 「記録あり」マーカー (旧.badge) */
+        .marker {
+            background: #28a745; /* 緑 */
+            color: white;
+            padding: 3px 8px;
+            border-radius: 10px;
+            font-size: 0.8em;
+            font-weight: 600;
+            display: none; /* JSで表示を制御 */
+        }
+        .user-list-item.active .marker {
+             background: #fff;
+             color: #28a745;
+        }
+        
+        /* (記録作成ボタン) */
+        .create-record-btn {
+            display: none; 
+            width: 100%;
+            padding: 15px;
+            margin-top: 20px;
+            font-size: 1.1em;
+            font-weight: 600;
+            background: #28a745;
+            color: white;
+            border: 0;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        .create-record-btn:hover {
+            background: #218838;
+        }
+        .create-record-btn:disabled {
+             background: #ccc;
+             cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>KOENO-APP (v2.1)</h1>
+        <span>介護士: （あなたの名前） さん</span>
+    </div>
+
+    <div class="container">
+        
+        <div class="main-content">
+            <div class="calendar-header">
+                <div class="calendar-nav">
+                    <button onclick="alert('（前の月に移動）')">&lt;</button>
+                    <h3>2025年 11月</h3>
+                    <button onclick="alert('（次の月に移動）')">&gt;</button>
+                </div>
+                <h3 id="selected-user-name">（入居者を選択してください）</h3>
+            </div>
+
+            <div class="calendar-grid" id="calendar-grid">
+                </div>
+        </div>
+
+        <div class="sidebar">
+            <h2>担当入居者</h2>
+            <ul class="user-list" id="user-list">
+                </ul>
+            
+            <button class="create-record-btn" id="create-btn" 
+                onclick="location.href='kirokudetail.html'"
+                disabled>
+                日付と入居者を選択
+            </button>
+        </div>
+
+    </div>
+
+
+    <script>
+        // --- ダミーデータ ---
+        const DUMMY_RECORDS = {
+            'u1': [5, 7, 8], // 佐藤様
+            'u2': [6, 7],    // 鈴木様
+            'u3': [5, 6, 7, 8, 9], // 高橋様 (9日入力済み)
+            'u4': []         // 田中様
+        };
+        const DUMMY_USERS = [
+            { id: 'u1', name: '佐藤 様' },
+            { id: 'u2', name: '鈴木 様' },
+            { id: 'u3', name: '高橋 様' },
+            { id: 'u4', name: '田中 様' },
+        ];
+        const TODAY = 9; // 本日は 11/9 (日) と仮定
+
+        // --- 選択状態の管理 ---
+        let selectedUserId = null;
+        let selectedDate = null; 
+        let selectedUserName = ''; 
+
+        // --- 起動時処理 ---
+        window.onload = () => {
+            renderCalendar();
+            renderUserList();
+            
+            const todayCell = document.querySelector(`.day[data-day="${TODAY}"]`);
+            if (todayCell) {
+                selectDate(TODAY, todayCell);
+            }
+            
+            updateCreateButton(); 
+        };
+
+        // --- カレンダー描画 ---
+        function renderCalendar() {
+            const grid = document.getElementById('calendar-grid');
+            const daysInMonth = 30; // 2025年11月
+            const startDay = 6; // 11/1は土曜日 (0=日, 6=土)
+            
+            grid.innerHTML = `
+                <div class="day-header">日</div>
+                <div class="day-header">月</div>
+                <div class="day-header">火</div>
+                <div class="day-header">水</div>
+                <div class="day-header">木</div>
+                <div class="day-header">金</div>
+                <div class="day-header">土</div>
+            `;
+            
+            for (let i = 0; i < startDay; i++) {
+                grid.innerHTML += `<div class="day other-month"></div>`;
+            }
+            
+            for (let i = 1; i <= daysInMonth; i++) {
+                let classes = 'day';
+                if (i === TODAY) classes += ' today';
+                
+                grid.innerHTML += `
+                    <div class="${classes}" data-day="${i}" onclick="selectDate(${i}, this)">
+                        ${i}
+                        <span class="day-marker">記録あり</span>
+                    </div>
+                `;
+            }
+        }
+        
+        // --- 入居者リスト描画 ---
+        function renderUserList() {
+            const list = document.getElementById('user-list');
+            list.innerHTML = ''; 
+            
+            DUMMY_USERS.forEach(user => {
+                const li = document.createElement('li');
+                li.className = 'user-list-item';
+                li.dataset.userId = user.id;
+                li.onclick = () => selectUser(user);
+                
+                // ★ v19: 「記録あり」マーカー（デフォルト非表示）を追加
+                li.innerHTML = `
+                    <span class="user-name">${user.name}</span>
+                    <span class="marker" id="marker-${user.id}">記録あり</span>
+                `;
+                list.appendChild(li);
+            });
+            
+            // ★ v19: 初回（本日）のマーカー状態を更新
+            updateUserMarkers();
+        }
+        
+        // --- インタラクション関数 ---
+        
+        function selectUser(user) {
+            selectedUserId = user.id;
+            selectedUserName = user.name;
+            
+            document.querySelectorAll('#user-list .user-list-item').forEach(item => {
+                item.classList.toggle('active', item.dataset.userId === user.id);
+            });
+            
+            updateCalendarMarkers(user.id);
+            document.getElementById('selected-user-name').textContent = `${user.name} の記録`;
+            updateCreateButton();
+        }
+        
+        function selectDate(dayNum, clickedCell) {
+            if (clickedCell.classList.contains('other-month')) return;
+            selectedDate = dayNum;
+            
+            document.querySelectorAll('#calendar-grid .day').forEach(day => {
+                day.classList.toggle('active', day.dataset.day == dayNum);
+            });
+            
+            // ★ v19: 日付変更時にマーカーを更新
+            updateUserMarkers();
+            updateCreateButton();
+        }
+        
+        // --- ヘルパー関数 ---
+        
+        function updateCalendarMarkers(userId) {
+            const records = DUMMY_RECORDS[userId] || [];
+            document.querySelectorAll('#calendar-grid .day').forEach(day => {
+                const marker = day.querySelector('.day-marker');
+                if (marker) {
+                    const dayNum = parseInt(day.dataset.day, 10);
+                    marker.style.display = records.includes(dayNum) ? 'block' : 'none';
+                }
+            });
+        }
+        
+        // ★ v19: 「記録あり」マーカーの状態を更新 (旧 updateBadges)
+        function updateUserMarkers() {
+            if (selectedDate === null) return; // 日付が選択されていなければ何もしない
+
+            DUMMY_USERS.forEach(user => {
+                const marker = document.getElementById(`marker-${user.id}`);
+                if (marker) {
+                    const records = DUMMY_RECORDS[user.id] || [];
+                    // 「選択された日付」の記録が「有る」場合にマーカーを表示
+                    if (records.includes(selectedDate)) {
+                        marker.style.display = 'inline-block';
+                    } else {
+                        marker.style.display = 'none';
+                    }
+                }
+            });
+        }
+
+        function updateCreateButton() {
+            const btn = document.getElementById('create-btn');
+            
+            if (selectedUserId && selectedDate) {
+                btn.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = `11/${selectedDate} ( ${selectedUserName} ) の記録を作成`;
+            } else {
+                btn.style.display = 'block';
+                btn.disabled = true;
+                if (!selectedUserId && !selectedDate) {
+                    btn.textContent = '入居者と日付を選択';
+                } else if (!selectedUserId) {
+                    btn.textContent = '入居者を選択';
+                } else {
+                    btn.textContent = '日付を選択';
+                }
+            }
+        }
+
+    </script>
+</body>
+</html>
