@@ -15,7 +15,7 @@ console.log('[APP] registerSW を呼び出します...');
 registerSW({
   immediate: true,
   onRegistered(registration) {
-    console.log(`[APP] Service Worker が正常に登録されました。スコープ: ${registration.scope}`);
+    console.log(`[APP] Service Worker が正常に登録されました。スコープ: ${registration?.scope}`);
   },
   onRegisterError(error) {
     console.error('[APP] Service Worker の登録に失敗しました:', error);

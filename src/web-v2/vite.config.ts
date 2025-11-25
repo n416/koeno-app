@@ -4,35 +4,25 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
-// https://vitejs.dev.config/
 export default defineConfig({
-  
   server: {
-    host: true, // ネットワークIPを許可 (Caddyが 5173 にアクセスするため必須)
-    
-    // ★★★ allowedHosts はCaddyからのアクセス(192.168.0.16)を許可するため、
-    // host: true でカバーされるか、明示的に 192.168.0.16 が必要かもしれませんが、
-    // ひとまず ngrok 用の設定は削除します。
+    host: true,
     allowedHosts: [
-      '192.168.0.16', // Caddyからのアクセスを許可
-      '.ngrok-free.dev', // ngrokのドメインを許可
-      '.ngrok-free.app'  // (念のためこちらも許可)
+      '192.168.0.16',
+      '.ngrok-free.dev',
+      '.ngrok-free.app'
     ],
-    
   },
-    
   plugins: [
     react(),
     VitePWA({
-      strategy: 'injectManifest',
+      strategies: 'injectManifest', // ★ここを修正 (strategy -> strategies)
       srcDir: 'src',
-      filename: 'sw.ts', // (sw.ts の if (!import.meta.env.DEV) は元に戻してください)
-      injectRegister: null, 
-      
+      filename: 'sw.ts',
+      injectRegister: null,
       devOptions: {
         enabled: true,
       },
-
       manifest: {
         name: 'KOENO-APP (Offline)',
         short_name: 'KOENO',

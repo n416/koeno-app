@@ -1,125 +1,75 @@
 import os
 import uvicorn
-# ★ List, Optional, Any, Dict, Query をインポート
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Body, Depends, Header, Query
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Body, Depends, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from contextlib import asynccontextmanager # ★追加
 from typing import List, Dict, Any, Optional
 import databases
 import sqlalchemy
-# ★★★ 修正: pydantic から BaseModel をインポート (NameError 修正) ★★★
 from pydantic import BaseModel
-# ★★★ タイムゾーン修正: datetime から timezone もインポート ★★★
 import datetime
-from datetime import timezone # ★ 追加
+from datetime import timezone
 
-# (デバッグ用 imports は削除)
-
-# -----------------------------------------------------------
-# 1. 設定 (Task 1: DB基盤)
-# -----------------------------------------------------------
-
-# サーバー内で完結するSQLiteデータベース
+# --- 設定 ---
 DATABASE_URL = "sqlite:///./koeno_app.db"
-
-# SQLAlchemyのデータベースエンジンとメタデータ
 database = databases.Database(DATABASE_URL)
 metadata = sqlalchemy.MetaData()
 
-# -----------------------------------------------------------
-# 2. DBスキーマ設計
-# -----------------------------------------------------------
-
-# Task 7.1: caregivers (変更なし)
+# --- テーブル定義 ---
 caregivers = sqlalchemy.Table(
-    "caregivers",
-    metadata,
+    "caregivers", metadata,
     sqlalchemy.Column("caregiver_id", sqlalchemy.String, primary_key=True),
-    sqlalchemy.Column("name", sqlalchemy.String, nullable=True), # (将来的な拡張用)
-    
-    # ★★★ v1.8 エラー修正: nullable=True を追加 ★★★
-    sqlalchemy.Column(
-        "created_at", 
-        sqlalchemy.DateTime, 
-        default=datetime.datetime.now(datetime.UTC), 
-        nullable=True # (古いデータがNULLでも許容)
-    ),
+    sqlalchemy.Column("name", sqlalchemy.String, nullable=True),
+    sqlalchemy.Column("created_at", sqlalchemy.DateTime, default=datetime.datetime.now(datetime.UTC), nullable=True),
 )
 
-# Task 8.1: administrators (変更なし)
 administrators = sqlalchemy.Table(
-    "administrators",
-    metadata,
+    "administrators", metadata,
     sqlalchemy.Column("admin_id", sqlalchemy.Integer, primary_key=True, autoincrement=True),
-    # (FK: caregivers.caregiver_id に連動)
     sqlalchemy.Column("caregiver_id", sqlalchemy.String, sqlalchemy.ForeignKey("caregivers.caregiver_id"), unique=True),
-    sqlalchemy.Column("role", sqlalchemy.String, default="owner"), # (例: 'owner', 'manager')
+    sqlalchemy.Column("role", sqlalchemy.String, default="owner"),
     sqlalchemy.Column("granted_at", sqlalchemy.DateTime, default=datetime.datetime.now(datetime.UTC))
 )
 
-
-# Task 1: recordings (v2.1 最終版)
 recordings = sqlalchemy.Table(
-    "recordings",
-    metadata,
+    "recordings", metadata,
     sqlalchemy.Column("recording_id", sqlalchemy.Integer, primary_key=True, autoincrement=True),
     sqlalchemy.Column("caregiver_id", sqlalchemy.String, index=True),
-    
-    sqlalchemy.Column("audio_file_path", sqlalchemy.String), 
+    sqlalchemy.Column("audio_file_path", sqlalchemy.String),
     sqlalchemy.Column("memo_text", sqlalchemy.Text),
-    
     sqlalchemy.Column("ai_status", sqlalchemy.String, default="pending", index=True),
-    
-    sqlalchemy.Column("transcription_result", sqlalchemy.JSON), # (List[Dict] を想定)
-    # (summary_result は削除)
-    
-    # ★ (v2.1 / Turn 96)
+    sqlalchemy.Column("transcription_result", sqlalchemy.JSON),
     sqlalchemy.Column("assignment_snapshot", sqlalchemy.JSON, nullable=True),
-    
-    # ★★★ 新設 (v2.1 / Turn 106) ★★★
-    # 画面Cの要約テキスト [n46_p1_106] ({"u1": "...", "u3": "..."}) を保存
     sqlalchemy.Column("summary_drafts", sqlalchemy.JSON, nullable=True),
-    
-    # ★★★ タイムゾーン修正: PWAからのJSTタイムスタンプをUTCで保存 ★★★
-    sqlalchemy.Column("created_at", sqlalchemy.DateTime), # (defaultは削除)
+    sqlalchemy.Column("created_at", sqlalchemy.DateTime),
 )
 
-# v2.1: care_records (変更なし)
 care_records = sqlalchemy.Table(
-    "care_records",
-    metadata,
+    "care_records", metadata,
     sqlalchemy.Column("care_record_id", sqlalchemy.Integer, primary_key=True, autoincrement=True),
-    # (注: v2.1では user_id は "u1", "u2" などのハードコードされた文字列を想定)
-    sqlalchemy.Column("user_id", sqlalchemy.String, index=True), 
-    sqlalchemy.Column("record_date", sqlalchemy.String, index=True), # (例: "2025-11-09")
+    sqlalchemy.Column("user_id", sqlalchemy.String, index=True),
+    sqlalchemy.Column("record_date", sqlalchemy.String, index=True),
     sqlalchemy.Column("final_text", sqlalchemy.Text),
-    sqlalchemy.Column("last_updated_by", sqlalchemy.String), # (保存した caregiver_id)
+    sqlalchemy.Column("last_updated_by", sqlalchemy.String),
     sqlalchemy.Column("updated_at", sqlalchemy.DateTime, default=datetime.datetime.now(datetime.UTC))
 )
 
-# v2.1: recording_assignments (変更なし)
 recording_assignments = sqlalchemy.Table(
-    "recording_assignments",
-    metadata,
+    "recording_assignments", metadata,
     sqlalchemy.Column("assignment_id", sqlalchemy.Integer, primary_key=True, autoincrement=True),
-    # (どの録音が)
     sqlalchemy.Column("recording_id", sqlalchemy.Integer, sqlalchemy.ForeignKey("recordings.recording_id"), index=True),
-    # (どの入居者に紐づいたか)
-    sqlalchemy.Column("user_id", sqlalchemy.String, index=True), 
+    sqlalchemy.Column("user_id", sqlalchemy.String, index=True),
     sqlalchemy.Column("assigned_at", sqlalchemy.DateTime, default=datetime.datetime.now(datetime.UTC)),
-    sqlalchemy.Column("assigned_by", sqlalchemy.String) # (保存した caregiver_id)
+    sqlalchemy.Column("assigned_by", sqlalchemy.String)
 )
 
-
-# -----------------------------------------------------------
-# 3. Pydanticモデル (APIリクエスト/レスポンス用)
-# -----------------------------------------------------------
-
+# --- Pydanticモデル ---
 class RecordingResponse(BaseModel):
     recording_id: int
     ai_status: str
     message: str
-
-# (v2.1 旧UI用モデルは削除)
 
 class AuthRequest(BaseModel):
     caregiver_id: str
@@ -133,7 +83,6 @@ class CaregiverInfo(BaseModel):
     name: Optional[str]
     created_at: Optional[datetime.datetime]
 
-# (v2.1 新API用モデル)
 class CareRecordInput(BaseModel):
     user_id: str
     record_date: str 
@@ -159,502 +108,177 @@ class UnassignedRecording(BaseModel):
 class TranscriptionResponse(BaseModel):
     recording_id: int
     ai_status: str
-    # ★★★ 修正 (v2.1 / Turn 106) ★★★
-    transcription_data: Optional[Any] # (生の文字起こし結果か、編集済みのスナップショット)
-    summary_drafts: Optional[Dict[str, str]] = None # (保存済みの要約テキスト)
-
+    transcription_data: Optional[Any]
+    summary_drafts: Optional[Dict[str, str]] = None
 
 class AssignmentInput(BaseModel):
     recording_id: int
-    user_ids: List[str] # (例: ["u1", "u3"])
-    assignment_snapshot: List[Dict[str, Any]] # (画面Cの tableRows)
-    # ★★★ 新設 (v2.1 / Turn 106) ★★★
-    summary_drafts: Dict[str, str] # (画面Cの summaryTexts)
-
+    user_ids: List[str]
+    assignment_snapshot: List[Dict[str, Any]]
+    summary_drafts: Dict[str, str]
 
 class AssignedRecording(BaseModel):
     recording_id: int
     caregiver_id: str
     memo_text: Optional[str]
     created_at: datetime.datetime
-    # ★★★ 以下2行を追加 ★★★
-    assignment_snapshot: Optional[Any] = None # (画面Cのスナップショット)
-    summary_drafts: Optional[Dict[str, str]] = None # (画面Cの要約)
+    assignment_snapshot: Optional[Any] = None
+    summary_drafts: Optional[Dict[str, str]] = None
 
+# --- ライフサイクル管理 (lifespan) ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 起動時
+    engine = sqlalchemy.create_engine(DATABASE_URL)
+    metadata.create_all(engine)
+    await database.connect()
+    print("--- データベース接続完了 ---")
+    yield
+    # 終了時
+    await database.disconnect()
+    print("データベース接続を切断しました。")
 
-# -----------------------------------------------------------
-# 4. FastAPI アプリケーションの定義
-# -----------------------------------------------------------
-app = FastAPI()
+# --- アプリ定義 ---
+app = FastAPI(lifespan=lifespan) # ★ここ重要
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # 本番では 'http://localhost:5173' 等に制限
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# -----------------------------------------------------------
-# 5. ライフサイクルイベント (DB接続/切断)
-# -----------------------------------------------------------
+# ★ ミドルウェア: フロントエンドからの /api リクエストのパスを修正
+@app.middleware("http")
+async def strip_api_prefix(request: Request, call_next):
+    if request.url.path.startswith("/api/"):
+        new_path = request.url.path[4:] # "/api" を削除
+        request.scope["path"] = new_path
+    response = await call_next(request)
+    return response
 
-@app.on_event("startup")
-async def startup():
-    """ サーバー起動時にDBテーブルを作成し、接続する """
-    engine = sqlalchemy.create_engine(DATABASE_URL)
-    metadata.create_all(engine) 
-    
-    await database.connect()
-    print("--- データベースに接続し、テーブル定義を確認しました ---")
-    # (デバッグログは削除)
-    print("（Task 1.1: ハードコードされたテストIDの登録は行われません）")
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    """ サーバー終了時にDBから切断する """
-    await database.disconnect()
-    print("データベース接続を切断しました。")
-
-# -----------------------------------------------------------
-# 6. APIエンドポイント (一般ユーザー)
-# -----------------------------------------------------------
-
-@app.get("/")
-def read_root():
-    return {"status": "KOENO-APP API (v2.1) is running"}
-
+# --- APIエンドポイント ---
 @app.post("/upload_recording", response_model=RecordingResponse)
 async def upload_recording(
     audio_blob: UploadFile = File(...),
     caregiver_id: str = Form(...),
     memo_text: str = Form(...),
-    # ★★★ タイムゾーン修正: PWAからJSTのISO文字列を受け取る ★★★
     created_at_iso: str = Form(...) 
 ):
     upload_dir = "uploads"
     os.makedirs(upload_dir, exist_ok=True)
     
-    # ★★★ タイムゾーン修正: PWAからの時刻をパース ★★★
     try:
-        # (例: "2025-11-10T08:30:00.123Z" または "...+09:00")
         client_created_at = datetime.datetime.fromisoformat(created_at_iso)
-        # タイムゾーン情報を保持したままUTCに変換
         created_at_utc = client_created_at.astimezone(timezone.utc)
     except (ValueError, TypeError):
-        # パース失敗時はサーバーのUTC時刻でフォールバック (v2.1の動作)
         print(f"警告: ISO日時のパース失敗。サーバー時刻を使用: {created_at_iso}")
         created_at_utc = datetime.datetime.now(timezone.utc)
-    # ★★★ 修正ここまで ★★★
     
-    # (ファイル名はサーバー時刻ベースでOK)
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_caregiver_id = caregiver_id.replace(":", "_").replace("/", "_").replace("\\", "_")
-    safe_filename = audio_blob.filename.replace(":", "_").replace("/", "_").replace("\\", "_")
-    relative_file_path = os.path.join(upload_dir, f"{safe_caregiver_id}_{timestamp}_{safe_filename}")
-    absolute_file_path = os.path.abspath(relative_file_path)
-
-    try:
-        with open(absolute_file_path, "wb") as f:
-            f.write(await audio_blob.read())
-    except Exception as e:
-        print(f"!!! ファイル保存エラー: {e} (Path: {absolute_file_path})") 
-        raise HTTPException(status_code=500, detail=f"音声ファイルの保存に失敗しました: {e}")
+    safe_id = caregiver_id.replace(":", "_")
+    filename = os.path.join(upload_dir, f"{safe_id}_{timestamp}_{audio_blob.filename}")
+    
+    with open(filename, "wb") as f:
+        f.write(await audio_blob.read())
 
     query = recordings.insert().values(
         caregiver_id=caregiver_id,
-        audio_file_path=absolute_file_path, 
+        audio_file_path=os.path.abspath(filename),
         memo_text=memo_text,
         ai_status="pending",
-        transcription_result=None,
-        assignment_snapshot=None, # (v2.1 / Turn 96)
-        summary_drafts=None, # ★ (v2.1 / Turn 106)
-        # ★★★ タイムゾーン修正: パースしたUTC時刻を保存 ★★★
-        created_at=created_at_utc 
+        created_at=created_at_utc
     )
-    
-    try:
-        last_record_id = await database.execute(query)
-        return {
-            "recording_id": last_record_id,
-            "ai_status": "pending",
-            "message": "録音データを受け付けました。AI処理待ちです。"
-        }
-    except Exception as e:
-        print(f"!!! DB INSERT エラー: {e}")
-        raise HTTPException(status_code=500, detail=f"データベースへの保存に失敗しました: {e}")
-
+    last_id = await database.execute(query)
+    return {"recording_id": last_id, "ai_status": "pending", "message": "Accepted"}
 
 @app.post("/authenticate")
-async def authenticate_caregiver(
-    auth_request: AuthRequest = Body(...)
-):
-    
-    result = None
-    try:
-        query = caregivers.select().where(caregivers.c.caregiver_id == auth_request.caregiver_id)
-        result = await database.fetch_one(query)
-        
-    except Exception as e:
-        print(f"認証DBエラー (500): {e}")
-        raise HTTPException(status_code=500, detail=f"Authentication error: {e}")
-
-    if result:
-        print(f"認証成功: ID {auth_request.caregiver_id}")
-        return {"status": "authenticated", "caregiver_id": auth_request.caregiver_id}
-    else:
-        print(f"認証失敗: ID {auth_request.caregiver_id}")
-        raise HTTPException(status_code=401, detail="Caregiver ID not found")
-
-# -----------------------------------------------------------
-# 7. ★★★ 新設 (v2.1): PCレビュー画面用 API ( /api プレフィックス【無し】) ★★★
-# -----------------------------------------------------------
+async def authenticate(req: AuthRequest = Body(...)):
+    res = await database.fetch_one(caregivers.select().where(caregivers.c.caregiver_id == req.caregiver_id))
+    if res: return {"status": "authenticated", "caregiver_id": req.caregiver_id}
+    raise HTTPException(401, "ID not found")
 
 @app.get("/care_records", response_model=CareRecordDateList)
-async def get_care_record_dates(
-    user_id: str = Query(...)
-):
-    """ [v2.1] 画面A用: 特定の入居者の介護記録が「存在する日付」のリストを取得 """
-    try:
-        query = sqlalchemy.select(care_records.c.record_date).where(
-            care_records.c.user_id == user_id
-        ).distinct()
-        results = await database.fetch_all(query)
-        dates = [row.record_date for row in results]
-        return {"dates": dates}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"記録日付の取得に失敗: {e}")
-
+async def get_dates(user_id: str = Query(...)):
+    q = sqlalchemy.select(care_records.c.record_date).where(care_records.c.user_id == user_id).distinct()
+    return {"dates": [r.record_date for r in await database.fetch_all(q)]}
 
 @app.get("/care_record_detail", response_model=CareRecordDetail)
-async def get_care_record_detail(
-    user_id: str = Query(...),
-    record_date: str = Query(...) # (例: "2025-11-09")
-):
-    """ [v2.1] 画面B用: 特定の入居者・日付の介護記録テキストを取得 """
-    try:
-        query = care_records.select().where(
-            (care_records.c.user_id == user_id) &
-            (care_records.c.record_date == record_date)
-        ).order_by(care_records.c.updated_at.desc()).limit(1) # 常に最新のものを1件
-        
-        result = await database.fetch_one(query)
-        
-        if not result:
-            # (GM指示 [n46_p1_55] 準拠: 404を返さず200 OKと空データを返す)
-            return CareRecordDetail(
-                user_id=user_id,
-                record_date=record_date,
-                final_text="", # (空のテキスト)
-                last_updated_by=None,
-                updated_at=None
-            )
-        
-        return result
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"記録詳細の取得に失敗: {e}")
-
+async def get_detail(user_id: str = Query(...), record_date: str = Query(...)):
+    q = care_records.select().where((care_records.c.user_id == user_id) & (care_records.c.record_date == record_date)).order_by(care_records.c.updated_at.desc()).limit(1)
+    res = await database.fetch_one(q)
+    if not res: return CareRecordDetail(user_id=user_id, record_date=record_date, final_text="")
+    return res
 
 @app.post("/save_care_record", status_code=201)
-async def save_care_record(
-    record_input: CareRecordInput = Body(...),
-    caller_id: str = Header(..., alias="X-Caller-ID")
-):
-    """ [v2.1] 画面B用: 介護記録テキストを保存 (UPSERT: 更新または挿入) """
-    try:
-        query_check = care_records.select().where(
-            (care_records.c.user_id == record_input.user_id) &
-            (care_records.c.record_date == record_input.record_date)
-        )
-        existing_record = await database.fetch_one(query_check)
-        
-        current_time = datetime.datetime.now(datetime.UTC)
-        
-        if existing_record:
-            query_update = care_records.update().where(
-                care_records.c.care_record_id == existing_record.care_record_id
-            ).values(
-                final_text=record_input.final_text,
-                last_updated_by=caller_id,
-                updated_at=current_time
-            )
-            await database.execute(query_update)
-            return {"status": "updated"}
-        else:
-            query_insert = care_records.insert().values(
-                user_id=record_input.user_id,
-                record_date=record_input.record_date,
-                final_text=record_input.final_text,
-                last_updated_by=caller_id,
-                updated_at=current_time
-            )
-            await database.execute(query_insert)
-            return {"status": "created"}
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"記録の保存に失敗: {e}")
-
+async def save_record(inp: CareRecordInput = Body(...), caller: str = Header(..., alias="X-Caller-ID")):
+    q_check = care_records.select().where((care_records.c.user_id == inp.user_id) & (care_records.c.record_date == inp.record_date))
+    exists = await database.fetch_one(q_check)
+    now = datetime.datetime.now(datetime.UTC)
+    if exists:
+        await database.execute(care_records.update().where(care_records.c.care_record_id == exists.care_record_id).values(final_text=inp.final_text, last_updated_by=caller, updated_at=now))
+        return {"status": "updated"}
+    await database.execute(care_records.insert().values(user_id=inp.user_id, record_date=inp.record_date, final_text=inp.final_text, last_updated_by=caller, updated_at=now))
+    return {"status": "created"}
 
 @app.get("/unassigned_recordings", response_model=List[UnassignedRecording])
-async def get_unassigned_recordings(
-    caregiver_id: str = Query(...),
-    record_date: str = Query(...) # (例: "2025-11-09")
-):
-    """ [v2.1] 画面B用: 未紐づけ録音リストを取得 """
-    
-    try:
-        # 1. 既に割り当て済みの recording_id のリストを取得
-        query_assigned_ids = sqlalchemy.select(
-            recording_assignments.c.recording_id
-        ).distinct()
-        assigned_ids_result = await database.fetch_all(query_assigned_ids)
-        assigned_ids = [row.recording_id for row in assigned_ids_result]
-        
-        # ★★★ タイムゾーンバグ修正 ★★★
-        # (SQLite方言: UTCの created_at を JST (+9時間) に変換してから日付比較)
-        jst_date_func = sqlalchemy.func.date(
-            sqlalchemy.func.datetime(recordings.c.created_at, '+9 hours')
-        )
-        
-        # 2. (GM指示: 当該日のデータのみに絞り込む)
-        query = recordings.select().where(
-            (recordings.c.caregiver_id == caregiver_id) &
-            # (修正: JST変換後の日付で比較)
-            (jst_date_func == record_date)
-        )
-        
-        # (v2.1 / Turn 99 バグ修正)
-        if assigned_ids:
-             query = query.where(
-                 (sqlalchemy.not_(recordings.c.recording_id.in_(assigned_ids)))
-             )
-        
-        query = query.order_by(recordings.c.created_at.desc())
-        
-        results = await database.fetch_all(query)
-        return results
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"録音リストの取得に失敗: {e}")
+async def get_unassigned(caregiver_id: str = Query(...), record_date: str = Query(...)):
+    assigned_ids = [r.recording_id for r in await database.fetch_all(sqlalchemy.select(recording_assignments.c.recording_id).distinct())]
+    jst_date = sqlalchemy.func.date(sqlalchemy.func.datetime(recordings.c.created_at, '+9 hours'))
+    q = recordings.select().where((recordings.c.caregiver_id == caregiver_id) & (jst_date == record_date))
+    if assigned_ids: q = q.where(sqlalchemy.not_(recordings.c.recording_id.in_(assigned_ids)))
+    return await database.fetch_all(q.order_by(recordings.c.created_at.desc()))
 
 @app.get("/assigned_recordings", response_model=List[AssignedRecording])
-async def get_assigned_recordings(
-    user_id: str = Query(...),
-    record_date: str = Query(...)
-):
-    """ [v2.1] 画面B用: 指定した入居者・日付に紐づく録音リストを取得 """
-    try:
-        # ★★★ タイムゾーンバグ修正 ★★★
-        # (SQLite方言: UTCの created_at を JST (+9時間) に変換してから日付比較)
-        jst_date_func = sqlalchemy.func.date(
-            sqlalchemy.func.datetime(recordings.c.created_at, '+9 hours')
-        )
-
-        j = sqlalchemy.join(
-            recording_assignments,
-            recordings,
-            recording_assignments.c.recording_id == recordings.c.recording_id
-        )
-        query = sqlalchemy.select(
-           recordings.c.recording_id,
-           recordings.c.caregiver_id,
-           recordings.c.memo_text,
-           recordings.c.created_at,
-           # ★★★ 以下2行を追加 ★★★
-           recordings.c.assignment_snapshot,
-           recordings.c.summary_drafts
-        ).select_from(j).where(
-            (recording_assignments.c.user_id == user_id) &
-            # (v2.1 / Turn 94 修正)
-            # (修正: JST変換後の日付で比較)
-            (jst_date_func == record_date)
-        ).order_by(recordings.c.created_at.asc())
-        
-        results = await database.fetch_all(query)
-        return results
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"紐づけ済み録音の取得に失敗: {e}")
-
+async def get_assigned(user_id: str = Query(...), record_date: str = Query(...)):
+    jst_date = sqlalchemy.func.date(sqlalchemy.func.datetime(recordings.c.created_at, '+9 hours'))
+    j = sqlalchemy.join(recording_assignments, recordings, recording_assignments.c.recording_id == recordings.c.recording_id)
+    q = sqlalchemy.select(recordings.c.recording_id, recordings.c.caregiver_id, recordings.c.memo_text, recordings.c.created_at, recordings.c.assignment_snapshot, recordings.c.summary_drafts).select_from(j).where((recording_assignments.c.user_id == user_id) & (jst_date == record_date)).order_by(recordings.c.created_at.asc())
+    return await database.fetch_all(q)
 
 @app.get("/recording_transcription/{recording_id}", response_model=TranscriptionResponse)
-async def get_recording_transcription(
-    recording_id: int,
-    caller_id: str = Header(..., alias="X-Caller-ID") # (認証用)
-):
-    """ [v2.1] 画面C用: 単一の録音IDから文字起こし結果(JSON)を取得 """
-    try:
-        query = recordings.select().where(
-            recordings.c.recording_id == recording_id
-        )
-        result = await database.fetch_one(query)
-        
-        if not result:
-            raise HTTPException(status_code=404, detail="該当の録音IDが見つかりません。")
-            
-        if result.caregiver_id != caller_id:
-             raise HTTPException(status_code=403, detail="この録音データへのアクセス権がありません。")
-
-        # (v2.1 / Turn 96)
-        transcription_data = result.assignment_snapshot or result.transcription_result
-        
-        return {
-            "recording_id": result.recording_id,
-            "ai_status": result.ai_status,
-            "transcription_data": transcription_data,
-            # ★★★ 修正 (v2.1 / Turn 106) ★★★
-            "summary_drafts": result.summary_drafts or {}
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"文字起こしデータの取得に失敗しました: {e}")
-
+async def get_transcription(recording_id: int, caller: str = Header(..., alias="X-Caller-ID")):
+    res = await database.fetch_one(recordings.select().where(recordings.c.recording_id == recording_id))
+    if not res or res.caregiver_id != caller: raise HTTPException(403, "Access denied")
+    return {"recording_id": res.recording_id, "ai_status": res.ai_status, "transcription_data": res.assignment_snapshot or res.transcription_result, "summary_drafts": res.summary_drafts or {}}
 
 @app.post("/save_assignments", status_code=201)
-async def save_assignments(
-    assignment_input: AssignmentInput = Body(...),
-    caller_id: str = Header(..., alias="X-Caller-ID")
-):
-    """ [v2.1] 画面C用: 録音IDと入居者IDの紐付けを上書き保存 """
-    
-    recording_id = assignment_input.recording_id
-    user_ids = assignment_input.user_ids
-    
+async def save_assign(inp: AssignmentInput = Body(...), caller: str = Header(..., alias="X-Caller-ID")):
     async with database.transaction():
-        try:
-            # 1. 古い割り当てを「すべて削除」
-            query_delete = recording_assignments.delete().where(
-                recording_assignments.c.recording_id == recording_id
-            )
-            await database.execute(query_delete)
-            
-            # 2. 新しい割り当てを挿入
-            if user_ids:
-                current_time = datetime.datetime.now(datetime.UTC)
-                new_assignments = []
-                for user_id in user_ids:
-                    new_assignments.append({
-                        "recording_id": recording_id,
-                        "user_id": user_id,
-                        "assigned_at": current_time,
-                        "assigned_by": caller_id
-                    })
-                
-                query_insert = recording_assignments.insert()
-                await database.execute_many(query_insert, new_assignments)
-            
-            # ★★★ 修正 (v2.1 / Turn 106) ★★★
-            # 3. 画面Cの編集結果（スナップショットと要約）を recordings テーブルに保存
-            query_update_snapshot = recordings.update().where(
-                recordings.c.recording_id == recording_id
-            ).values(
-                assignment_snapshot=assignment_input.assignment_snapshot,
-                summary_drafts=assignment_input.summary_drafts # ★ 追加
-            )
-            await database.execute(query_update_snapshot)
-            # ★★★ 修正ここまで ★★★
+        await database.execute(recording_assignments.delete().where(recording_assignments.c.recording_id == inp.recording_id))
+        if inp.user_ids:
+            vals = [{"recording_id": inp.recording_id, "user_id": u, "assigned_at": datetime.datetime.now(datetime.UTC), "assigned_by": caller} for u in inp.user_ids]
+            await database.execute_many(recording_assignments.insert(), vals)
+        await database.execute(recordings.update().where(recordings.c.recording_id == inp.recording_id).values(assignment_snapshot=inp.assignment_snapshot, summary_drafts=inp.summary_drafts))
+    return {"status": "success"}
 
-            return {"status": "success", "recording_id": recording_id, "assigned_users": user_ids}
-
-        except Exception as e:
-            print(f"!!! 割り当て保存エラー: {e}")
-            raise HTTPException(status_code=500, detail=f"割り当ての保存に失敗しました: {e}")
-
-
-# -----------------------------------------------------------
-# 8. 管理者用 認可Dependency (変更なし)
-# -----------------------------------------------------------
-
-async def verify_admin(x_caller_id: str = Header(None)):
-    if x_caller_id is None:
-        print("管理者API 認可エラー: X-Caller-ID ヘッダーがありません。")
-        raise HTTPException(status_code=401, detail="Unauthorized: X-Caller-ID header is missing")
-    try:
-        query = administrators.select().where(administrators.c.caregiver_id == x_caller_id)
-        result = await database.fetch_one(query)
-        if not result:
-            print(f"管理者API 認可エラー: ID {x_caller_id} には管理者権限がありません。")
-            raise HTTPException(status_code=403, detail="Forbidden: User does not have admin privileges")
-        return x_caller_id 
-    except Exception as e:
-        print(f"管理者API 認可エラー (500): {e}")
-        raise HTTPException(status_code=500, detail=f"Authorization check failed: {e}")
-
-# -----------------------------------------------------------
-# 9. 管理者用CRUDエンドポイント (変更なし)
-# -----------------------------------------------------------
+async def verify_admin(x: str = Header(None)):
+    if not x or not await database.fetch_one(administrators.select().where(administrators.c.caregiver_id == x)): raise HTTPException(403)
+    return x
 
 @app.get("/admin/caregivers", response_model=List[CaregiverInfo])
-async def admin_get_caregivers(
-    admin_id: str = Depends(verify_admin) # ★ Task 8.1 適用
-):
-    try:
-        query = caregivers.select().order_by(caregivers.c.created_at.desc())
-        all_caregivers = await database.fetch_all(query)
-        return all_caregivers
-    except Exception as e:
-        print(f"管理者API (GET) エラー: {e}")
-        raise HTTPException(status_code=500, detail=f"ID一覧の取得に失敗しました: {e}")
+async def ad_list(a: str = Depends(verify_admin)): return await database.fetch_all(caregivers.select().order_by(caregivers.c.created_at.desc()))
 
 @app.post("/admin/caregivers", response_model=CaregiverInfo)
-async def admin_create_caregiver(
-    caregiver_input: CaregiverInput = Body(...),
-    admin_id: str = Depends(verify_admin) # ★ Task 8.1 適用
-):
+async def ad_add(i: CaregiverInput = Body(...), a: str = Depends(verify_admin)):
     try:
-        query = caregivers.insert().values(
-            caregiver_id=caregiver_input.caregiver_id,
-            name=caregiver_input.name,
-            created_at=datetime.datetime.now(datetime.UTC) # ← 明示的に指定
-        )
-        await database.execute(query)
-        query_result = caregivers.select().where(caregivers.c.caregiver_id == caregiver_input.caregiver_id)
-        created_record = await database.fetch_one(query_result)
-        return created_record
-    except sqlalchemy.exc.IntegrityError:
-        print(f"管理者API (POST) エラー: ID {caregiver_input.caregiver_id} は既に存在します。")
-        raise HTTPException(status_code=409, detail=f"ID '{caregiver_input.caregiver_id}' は既に存在します。")
-    except Exception as e:
-        print(f"管理者API (POST) エラー: {e}")
-        raise HTTPException(status_code=500, detail=f"IDの登録に失敗しました: {e}")
+        await database.execute(caregivers.insert().values(caregiver_id=i.caregiver_id, name=i.name, created_at=datetime.datetime.now(datetime.UTC)))
+        return await database.fetch_one(caregivers.select().where(caregivers.c.caregiver_id == i.caregiver_id))
+    except: raise HTTPException(409, "Exists")
 
-@app.delete("/admin/caregivers/{caregiver_id}", status_code=204)
-async def admin_delete_caregiver(
-    caregiver_id: str,
-    admin_id: str = Depends(verify_admin) # ★ Task 8.1 適用
-):
-    try:
-        query_check = caregivers.select().where(caregivers.c.caregiver_id == caregiver_id)
-        existing = await database.fetch_one(query_check)
-        if not existing:
-            print(f"管理者API (DELETE) エラー: ID {caregiver_id} が見つかりません。")
-            raise HTTPException(status_code=404, detail=f"ID '{caregiver_id}' が見つかりません。")
-        query = caregivers.delete().where(caregivers.c.caregiver_id == caregiver_id)
-        await database.execute(query)
-        print(f"管理者API (DELETE): ID {caregiver_id} を削除しました。")
-        return
-    except Exception as e:
-        print(f"管理者API (DELETE) エラー: {e}")
-        raise HTTPException(status_code=500, detail=f"IDの削除に失敗しました: {e}")
+@app.delete("/admin/caregivers/{cid}", status_code=204)
+async def ad_del(cid: str, a: str = Depends(verify_admin)):
+    await database.execute(caregivers.delete().where(caregivers.c.caregiver_id == cid))
 
+# --- フロントエンド配信 ---
+FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "../web-v2/dist")
+if os.path.exists(FRONTEND_DIR):
+    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
+    @app.exception_handler(404)
+    async def spa_fallback(req, exc):
+        if req.url.path.startswith("/api") or req.url.path.startswith("/upload_recording"): return await app.exception_handler(404)(req, exc)
+        return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
 
-# ★★★ デバッグログ (v2.1) 削除 ★★★
-# (キャッチオールルートを削除)
-
-
-# -----------------------------------------------------------
-# 10. サーバーの起動 (開発用)
-# -----------------------------------------------------------
 if __name__ == "__main__":
-    print("開発サーバー(v2.1 / タイムゾーン修正版)を http://127.0.0.1:8000 で起動します")
-    
-    # ★ Task 7 修正: ngrok プロキシ対応
-    uvicorn.run(
-        "main:app", # "ファイル名:FastAPIインスタンス名" の文字列形式
-        host="127.0.0.1", 
-        port=8000,
-        proxy_headers=True, # ngrok が追加する X-Forwarded-Host などを信頼する
-        forwarded_allow_ips="*" # すべてのIPからのプロキシを許可（開発用）
-        # reload=True # (お好みで: コード変更時に自動リロード)
-    )
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, proxy_headers=True, forwarded_allow_ips="*")

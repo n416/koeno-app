@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 // ★★★ 修正: Link (RouterLink) と useNavigate をインポート ★★★
 import { Routes, Route, useLocation, Link as RouterLink, useNavigate } from 'react-router-dom'; 
 import { AuthPage } from './pages/AuthPage';

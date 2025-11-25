@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'; // ★ [PO 2.2] useEffect をインポート
+import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../db';
 import { useNavigate } from 'react-router-dom';
