@@ -1,73 +1,52 @@
-# React + TypeScript + Vite
+# KOENO-APP Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+フロントエンド（React/Vite）の起動・開発手順です。
 
-Currently, two official plugins are available:
+## 1. 開発サーバーの起動
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+起動後、以下のローカルURLでアクセスできます（PCのみ）：
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+- <http://localhost:5173>
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+> **注意:** ログインや録音データのアップロードを行うには、別途 `src/api` でバックエンドサーバー（`python main.py`）が起動している必要があります。
+
+---
+
+## 2\. モバイル実機テスト / 外部アクセス (ngrok)
+
+スマホでのNFC認証（Web NFC API）やHTTPS環境でのテストを行うには `ngrok` を使用します。 別ターミナルで以下を実行してください。
+
+Bash
+
 ```
+ngrok http 5173
+```
+
+実行すると、以下のような **Forwarding URL** が発行されます。
+
+Plaintext
+
+```
+Forwarding    https://<ランダムな文字列>.ngrok-free.app -> http://localhost:5173
+```
+
+※ `<ランダムな文字列>` の部分（例: `collected-donte-oophytic` 等）は、ngrokを起動するたびに変わります。スマホからはこのURLを使ってアクセスしてください。
+
+---
+
+## 3\. 画面・URL一覧
+
+| 画面 | パス | URL例 (ngrok利用時) | 用途 |
+| --- | --- | --- | --- |
+| **スマホ用** | `/` | `https://<...>.ngrok-free.app/` | 録音・PWA (NFC/PINログイン) |
+| **PC管理者用** | `/review` | `https://<...>.ngrok-free.app/review` | 記録一覧・詳細・AI編集 |
+
+Google スプレッドシートにエクスポート
+
+### アクセス例
+
+PCのレビュー画面を開く場合： `https://collected-donte-oophytic.ngrok-free.dev/review` （※ドメイン部分は発行されたものに置き換えてください）

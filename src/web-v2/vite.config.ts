@@ -12,11 +12,19 @@ export default defineConfig({
       '.ngrok-free.dev',
       '.ngrok-free.app'
     ],
+    // ★★★ ここを追加（重要！） ★★★
+    // これにより、/api へのリクエストが Python サーバー(8000)に転送されます
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      }
+    }
   },
   plugins: [
     react(),
     VitePWA({
-      strategies: 'injectManifest', // ★ここを修正 (strategy -> strategies)
+      strategies: 'injectManifest',
       srcDir: 'src',
       filename: 'sw.ts',
       injectRegister: null,
