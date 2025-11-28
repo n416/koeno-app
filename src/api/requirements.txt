@@ -27,3 +27,5 @@ scipy
 # --- ユーティリティ (音声ロード) ---
 # (Task 2以降の非同期AI処理バッチで使用予定)
 pydub
+
+python-multipart
