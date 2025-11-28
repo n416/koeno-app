@@ -336,7 +336,11 @@ export const KirokuAdjustPage = () => {
   const handleGenerateDraft = async (userId: string, userName: string) => {
     const apiKey = localStorage.getItem('geminiApiKey');
     const modelId = localStorage.getItem('geminiModelId');
-    if (!apiKey || !modelId) {
+    // ★★★ バックドアモードのチェックを追加 ★★★
+    const isNoApiMode = localStorage.getItem('noApiMode') === 'true';
+
+    // キーが無い場合でも、NoApiModeなら通過させる
+    if ((!apiKey || !modelId) && !isNoApiMode) {
       setError("Gemini APIキーが設定されていません。右上の設定（歯車）アイコンから設定してください。");
       return;
     }
@@ -353,16 +357,38 @@ export const KirokuAdjustPage = () => {
     setSummaryLoading(prev => ({ ...prev, [userId]: true }));
     setError(null);
 
-    const conversationLog = assignedTranscripts.map(seg =>
+    // ★★★ 匿名化ロジック (修正版: 呼び捨て対応) ★★★
+    const PSEUDONYM = "対象者";
+    
+    // 名前から敬称や空白を除去して「呼び捨て」部分を取得 (例: "佐藤 様" -> "佐藤")
+    const baseName = userName.replace(/[\s\u3000]*[様さん君ちゃん]/g, '').trim();
+
+    // 1. 会話ログを作成
+    let conversationLog = assignedTranscripts.map(seg =>
       `${seg.speaker}: ${seg.text}`
     ).join('\n');
 
-    const systemPrompt = `あなたは介護記録の作成を支援するAIです。以下の会話ログを分析し、介護士が「${userName}」に関して把握すべき重要な情報（健康状態、発言、行動）を、簡潔な箇条書きで要約してください。`;
+    // 2. ログ内の名前を伏せる (baseNameを使って強力に置換)
+    let maskedLog = conversationLog;
+    if (baseName.length > 0) {
+        maskedLog = maskedLog.replaceAll(baseName, PSEUDONYM);
+    }
+
+    // 3. プロンプトも偽名で作成
+    const systemPrompt = `あなたは介護記録の作成を支援するAIです。以下の会話ログを分析し、介護士が「${PSEUDONYM}」に関して把握すべき重要な情報（健康状態、発言、行動）を、簡潔な箇条書きで要約してください。`;
 
     try {
       const client = new GeminiApiClient(apiKey);
-      const result = await client.generateIsolatedContent(conversationLog, modelId, systemPrompt);
-      setSummaryTexts(prev => ({ ...prev, [userId]: result }));
+      // ★ 偽名ログと偽名プロンプトを渡す (modelIdの型も修正: || '')
+      const result = await client.generateIsolatedContent(maskedLog, modelId || '', systemPrompt);
+      
+      // ★★★ 書き戻し (修正版) ★★★
+      let realNameResult = result;
+      if (baseName.length > 0) {
+          realNameResult = realNameResult.replaceAll(PSEUDONYM, baseName);
+      }
+      
+      setSummaryTexts(prev => ({ ...prev, [userId]: realNameResult }));
     } catch (e) {
       if (e instanceof Error) setError(e.message);
       else setError("AI要約の生成に失敗しました。");
@@ -550,7 +576,7 @@ export const KirokuAdjustPage = () => {
               const isGroupActive = activeGroups.has(userId);
 
               return (
-                // ★★★ 修正: `size` プロパティを使用 ★★★
+                /* ★★★ 修正: Grid item xs -> Grid size ★★★ */
                 <Grid size={{ xs: 12, md: 4 }} key={userId}>
                   <Paper variant="outlined" sx={{ p: 2, borderTop: `4px solid ${userColor}`, opacity: isGroupActive ? 1 : 0.6 }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

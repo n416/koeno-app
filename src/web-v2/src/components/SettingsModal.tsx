@@ -1,9 +1,6 @@
-//
-// yorisoi-care-app の SettingsModal.tsx をベースに、koeno-app用に調整
-// (ローカルLLM連携、ウェイクワード設定は削除)
-
-import React from 'react';
-import type { ApiModel } from '../lib/geminiApiClient'; // ★ 新設したApiClientを参照
+// src/components/SettingsModal.tsx
+import React, { useState } from 'react'; // useEffectは不要になったので削除
+import type { ApiModel } from '../lib/geminiApiClient';
 
 // MUI Components
 import Modal from '@mui/material/Modal';
@@ -17,6 +14,9 @@ import FormControl from '@mui/material/FormControl';
 import InputLabel from '@mui/material/InputLabel';
 import FormHelperText from '@mui/material/FormHelperText';
 import Stack from '@mui/material/Stack';
+// ★ 追加
+import { Fade, FormControlLabel, Switch } from '@mui/material';
+import BugReportIcon from '@mui/icons-material/BugReport';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -42,6 +42,8 @@ const style = {
   borderRadius: 2,
   boxShadow: 24,
   p: 4,
+  maxHeight: '90vh',
+  overflowY: 'auto' // コンテンツが増えるのでスクロール可能に
 };
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -51,8 +53,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onSave, onTestConnection, testStatus
 }) => {
 
-  // 選択中のモデルがリストに存在する場合のみ表示
+  // ★★★ バックドア用 State (wowfitから移植) ★★★
+  const [versionClickCount, setVersionClickCount] = useState(0);
+  const [isDevMode, setIsDevMode] = useState(() => localStorage.getItem('isDevMode') === 'true');
+  const [noApiMode, setNoApiMode] = useState(() => localStorage.getItem('noApiMode') === 'true');
+
   const displayValue = availableModels.some(m => m.id === selectedModel) ? selectedModel : '';
+
+  // ★ 保存ハンドラ (親のonSaveも呼びつつ、ローカル設定も保存)
+  const handleSaveWrapper = () => {
+    localStorage.setItem('isDevMode', String(isDevMode));
+    localStorage.setItem('noApiMode', String(noApiMode));
+    onSave();
+  };
+
+  // ★ 連打ハンドラ
+  const handleVersionClick = () => {
+    if (isDevMode) return;
+    const newCount = versionClickCount + 1;
+    setVersionClickCount(newCount);
+    if (newCount >= 10) {
+      setIsDevMode(true);
+      localStorage.setItem('isDevMode', 'true');
+      alert("開発者モードが有効になりました。\n(APIなしモードが利用可能です)");
+    }
+  };
 
   return (
     <Modal
@@ -74,8 +99,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             onChange={(e) => onApiKeyInputChange(e.target.value)}
             variant="outlined"
             helperText="AI草案生成機能（画面B/C）に必要です"
+            disabled={noApiMode} // ★ APIなしモードなら無効化
           />
-          <FormControl fullWidth disabled={availableModels.length === 0}>
+          
+          <FormControl fullWidth disabled={availableModels.length === 0 && !noApiMode}>
             <InputLabel id="model-select-label">使用モデル</InputLabel>
             <Select
               labelId="model-select-label"
@@ -86,7 +113,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             >
               {availableModels.length === 0 ? (
                 <MenuItem value="" disabled>
-                  先に接続テストを実行してください
+                  {noApiMode ? '手動入力モード' : '先に接続テストを実行してください'}
                 </MenuItem>
               ) : (
                 availableModels.map((model) => (
@@ -96,11 +123,61 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </Select>
           </FormControl>
 
+          {/* ★★★ 開発者モード（バックドア）エリア ★★★ */}
+          {isDevMode && (
+            <Fade in={isDevMode}>
+              <Box sx={{ p: 2, border: '1px dashed #ff9800', borderRadius: 2, bgcolor: '#fff3e0' }}>
+                <Stack direction="row" alignItems="center" spacing={1} mb={1}>
+                  <BugReportIcon color="warning" />
+                  <Typography variant="subtitle2" fontWeight="bold" color="warning.dark">
+                    Developer Options
+                  </Typography>
+                </Stack>
+                
+                <FormControlLabel
+                  control={
+                    <Switch 
+                      checked={noApiMode} 
+                      onChange={(e) => setNoApiMode(e.target.checked)} 
+                      color="warning"
+                    />
+                  }
+                  label={
+                    <Box>
+                      <Typography variant="body2" fontWeight="bold">APIなしモード</Typography>
+                      <Typography variant="caption" color="textSecondary" sx={{ lineHeight: 1 }}>
+                        プロンプトをクリップボードにコピーし、結果を手動入力します。
+                      </Typography>
+                    </Box>
+                  }
+                />
+              </Box>
+            </Fade>
+          )}
+
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <Button variant="outlined" onClick={onTestConnection}>接続テスト</Button>
-            <Button variant="contained" onClick={onSave}>設定を保存</Button>
+            <Button variant="outlined" onClick={onTestConnection} disabled={noApiMode}>接続テスト</Button>
+            <Button variant="contained" onClick={handleSaveWrapper}>設定を保存</Button>
           </Box>
           <FormHelperText>{testStatus}</FormHelperText>
+
+          {/* ★★★ バージョン情報 (トリガー) ★★★ */}
+          <Box 
+            onClick={handleVersionClick}
+            sx={{ 
+              mt: 2, pt: 2, borderTop: '1px solid #eee', textAlign: 'center',
+              userSelect: 'none', cursor: 'default', opacity: 0.5,
+              '&:active': { transform: 'scale(0.98)' } 
+            }}
+          >
+            <Typography variant="caption" display="block">
+              KOENO-APP v2.1
+            </Typography>
+            <Typography variant="caption" color="textSecondary">
+              (c) 2025 Kisaragi System
+            </Typography>
+          </Box>
+
         </Stack>
       </Box>
     </Modal>

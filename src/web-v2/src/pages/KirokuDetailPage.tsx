@@ -10,7 +10,7 @@ import {
   Typography,
   Button,
   TextField,
-  Grid, // ★ Grid をインポート
+  Grid,
   Paper,
   List,
   ListItem,
@@ -40,7 +40,7 @@ interface RecordingBase {
 
 // .env から API のベース URL を取得
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
-const API_PATH = API_BASE_URL; // ★ VITE_API_BASE_URL (/api) をそのまま使う
+const API_PATH = API_BASE_URL;
 
 /**
  * 画面B: 介護記録詳細 (kirokudetail.html)
@@ -123,7 +123,10 @@ export const KirokuDetailPage = () => {
     // (1) APIキー/モデルを取得
     const apiKey = localStorage.getItem('geminiApiKey');
     const modelId = localStorage.getItem('geminiModelId');
-    if (!apiKey || !modelId) {
+    // ★ バックドア対応
+    const isNoApiMode = localStorage.getItem('noApiMode') === 'true';
+
+    if ((!apiKey || !modelId) && !isNoApiMode) {
         setError("Gemini APIキーが設定されていません。右上の設定（歯車）アイコンから設定してください。");
         return;
     }
@@ -146,21 +149,41 @@ export const KirokuDetailPage = () => {
     setError(null);
     setRecordText("AIが草案を生成中...\n");
 
-    // (3) プロンプトを生成
-    const combinedSummaries = summaries.map((s, i) => `--- 個別要約 ${i + 1} ---\n${s}`).join('\n\n');
+    // ★★★ 匿名化ロジック (修正版: 呼び捨て対応) ★★★
+    const PSEUDONYM = "利用者A";
+    
+    // 名前から敬称や空白を除去 (例: "佐藤 様" -> "佐藤")
+    const baseName = userName.replace(/[\s\u3000]*[様さん君ちゃん]/g, '').trim();
+
+    // 1. 要約テキスト内の名前を伏せる
+    const combinedSummaries = summaries.map((s, i) => {
+      let maskedSummary = s;
+      if (baseName.length > 0) {
+          maskedSummary = s.replaceAll(baseName, PSEUDONYM);
+      }
+      return `--- 個別要約 ${i + 1} ---\n${maskedSummary}`;
+    }).join('\n\n');
     
     const systemPrompt = "あなたは介護記録の作成を支援するAIです。";
-    const userPrompt = `以下の複数の「個別要約」を読みやすいように結合・整理し、${userName}（${date}）の最終的な「介護記録（草案）」を作成してください。
+    
+    // 2. 指示プロンプトも偽名で作成
+    const userPrompt = `以下の複数の「個別要約」を読みやすいように結合・整理し、${PSEUDONYM}（${date}）の最終的な「介護記録（草案）」を作成してください。
 
 ${combinedSummaries}
 `;
 
     try {
         const client = new GeminiApiClient(apiKey);
-        const result = await client.generateIsolatedContent(userPrompt, modelId, systemPrompt);
+        // ★ 偽名プロンプトを渡す (modelIdの型も修正: || '')
+        const result = await client.generateIsolatedContent(userPrompt, modelId || '', systemPrompt);
         
-        // (4) 結果をテキストエリアに反映
-        setRecordText(result);
+        // ★★★ 書き戻し (修正版) ★★★
+        let realNameResult = result;
+        if (baseName.length > 0) {
+            realNameResult = result.replaceAll(PSEUDONYM, baseName);
+        }
+        
+        setRecordText(realNameResult);
         
     } catch (e) {
         if (e instanceof Error) setError(e.message);
@@ -250,7 +273,7 @@ ${combinedSummaries}
 
       {/* --- 録音リスト (★ 構文修正) --- */}
       <Grid container spacing={3}>
-        {/* ★★★ 修正: `size` prop を `item xs/md` props に変更 ★★★ */}
+        {/* ★★★ 修正: Grid item xs -> Grid size ★★★ */}
         <Grid size={{ xs: 12, md: 6 }}> 
           <Paper sx={{ p: 2, width: '100%' }}>
             <Typography variant="h6" component="h3" gutterBottom>
@@ -260,7 +283,6 @@ ${combinedSummaries}
               {assignedList.map(rec => (
                 <ListItemButton 
                   key={rec.recording_id} 
-                  // ★★★ 修正: navigate 時に state を渡す ★★★
                   onClick={() => navigate(`/review/adjust/${rec.recording_id}`, { state: { fromUserId: userId, fromDate: date } })}
                   disabled={loading || aiLoading} 
                 >
@@ -277,7 +299,7 @@ ${combinedSummaries}
           </Paper>
         </Grid>
         
-        {/* ★★★ 修正: `size` prop を `item xs/md` props に変更 ★★★ */}
+        {/* ★★★ 修正: Grid item xs -> Grid size ★★★ */}
         <Grid size={{ xs: 12, md: 6 }}> 
           <Paper sx={{ p: 2, width: '100%' }}>
             <Typography variant="h6" component="h3" gutterBottom>
@@ -287,7 +309,6 @@ ${combinedSummaries}
               {unassignedList.map(rec => (
                 <ListItemButton 
                   key={rec.recording_id} 
-                  // ★★★ 修正: navigate 時に state を渡す ★★★
                   onClick={() => navigate(`/review/adjust/${rec.recording_id}`, { state: { fromUserId: userId, fromDate: date } })}
                   disabled={loading || aiLoading} 
                 >
@@ -322,5 +343,4 @@ ${combinedSummaries}
   );
 };
 
-// コンポーネントをデフォルトエクスポート
 export default KirokuDetailPage;

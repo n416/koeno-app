@@ -1,5 +1,3 @@
-/// <reference types="vite-plugin-pwa/info" />
-
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
@@ -12,8 +10,7 @@ export default defineConfig({
       '.ngrok-free.dev',
       '.ngrok-free.app'
     ],
-    // ★★★ ここを追加（重要！） ★★★
-    // これにより、/api へのリクエストが Python サーバー(8000)に転送されます
+    // APIサーバーへのプロキシ
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8000',
@@ -27,9 +24,10 @@ export default defineConfig({
       strategies: 'injectManifest',
       srcDir: 'src',
       filename: 'sw.ts',
-      injectRegister: null,
+      injectRegister: 'auto', // ★ここを 'auto' に変更 (null から変更)
       devOptions: {
         enabled: true,
+        type: 'module', // ★念のため明示
       },
       manifest: {
         name: 'KOENO-APP (Offline)',
