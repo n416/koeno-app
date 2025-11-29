@@ -1,5 +1,4 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
-// ★★★ 修正: Link (RouterLink) と useNavigate をインポート ★★★
 import { Routes, Route, useLocation, Link as RouterLink, useNavigate } from 'react-router-dom'; 
 import { AuthPage } from './pages/AuthPage';
 import { RecordPage } from './pages/RecordPage';
@@ -10,45 +9,39 @@ import { AdminUsersPage } from './pages/AdminUsersPage';
 import { AdminProtectedRoute } from './components/AdminProtectedRoute';
 import { KioskProtectedRoute } from './components/KioskProtectedRoute';
 
-// ★★★ v2.1 新UIコンポーネント ★★★
-import KirokuListPage from './pages/KirokuListPage'; //
-import KirokuDetailPage from './pages/KirokuDetailPage'; //
-import KirokuAdjustPage from './pages/KirokuAdjustPage'; //
+// v2.1 新UIコンポーネント
+import KirokuListPage from './pages/KirokuListPage';
+import KirokuDetailPage from './pages/KirokuDetailPage';
+import KirokuAdjustPage from './pages/KirokuAdjustPage';
+import { StaffInputPage } from './pages/StaffInputPage'; // ★ 追加
 
-// ★★★ v2.1 Gemini API対応 ★★★
-import { SettingsModal } from './components/SettingsModal'; //
-import { GeminiApiClient, type ApiModel } from './lib/geminiApiClient'; //
+// v2.1 Gemini API対応
+import { SettingsModal } from './components/SettingsModal';
+import { GeminiApiClient, type ApiModel } from './lib/geminiApiClient';
 
-// ★★★ テーマ・MUI ★★★
+// テーマ・MUI
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { lightTheme, darkTheme } from './theme';
-// ★★★ 修正: Button をインポート ★★★
 import { AppBar, Toolbar, Typography, IconButton, Button } from '@mui/material'; 
 import SettingsIcon from '@mui/icons-material/Settings';
-// ★★★ 修正: 管理者・ログアウトアイコンをインポート ★★★
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import LogoutIcon from '@mui/icons-material/Logout';
-// ★★★ 修正: AuthContext をインポート ★★★
 import { useAuth } from './contexts/AuthContext'; 
 
-
 /**
- * [v2.1] App.tsx 最終版
- * - 旧UIを削除
- * - 新UI (A,B,C) をルーティング
- * - APIキーモーダルを実装
+ * [v2.2] App.tsx
+ * - 現場向け画面 (StaffInputPage) を追加
  */
 function App() {
-  const location = useLocation(); // ★ 現在のパスを取得
+  const location = useLocation();
   const prefersDarkMode = useMediaQuery('(prefers-color-scheme: dark)');
   const theme = useMemo(
     () => (prefersDarkMode ? darkTheme : lightTheme),
     [prefersDarkMode],
   );
 
-  // ★★★ 修正: auth コンテキストと navigate を取得 ★★★
   const auth = useAuth();
   const navigate = useNavigate();
 
@@ -59,13 +52,14 @@ function App() {
   const [models, setModels] = useState<ApiModel[]>([]);
   const [testStatus, setTestStatus] = useState('未テスト');
 
-  // APIキーの初期ロード
+  // APIキーの初期ロード (接続テスト)
   useEffect(() => {
     const key = localStorage.getItem('geminiApiKey');
-    if (key) {
+    const noApiMode = localStorage.getItem('noApiMode') === 'true';
+    if (key && !noApiMode) {
       handleTestConnection(key);
     }
-  }, []); // ★ 依存配列から handleTestConnection を削除 (useCallbackしていないため)
+  }, []); 
 
   const handleTestConnection = useCallback(async (keyToTest: string) => {
     setTestStatus('テスト中...');
@@ -77,7 +71,7 @@ function App() {
       if (savedModel && availableModels.some(m => m.id === savedModel)) {
         setModelId(savedModel);
       } else if (availableModels.length > 0) {
-        setModelId(availableModels[0].id); // デフォルトを設定
+        setModelId(availableModels[0].id);
       }
       setTestStatus(`成功: ${availableModels.length} モデル取得`);
     } catch (e) {
@@ -90,13 +84,16 @@ function App() {
     localStorage.setItem('geminiApiKey', apiKey);
     localStorage.setItem('geminiModelId', modelId);
     setIsSettingsOpen(false);
-    handleTestConnection(apiKey); // 保存と同時に接続テスト
+    
+    const noApiMode = localStorage.getItem('noApiMode') === 'true';
+    if (!noApiMode) {
+        handleTestConnection(apiKey);
+    }
   };
 
-  // ★ v2.1 PCレビュー画面 (/review) でのみヘッダーを表示
+  // PCレビュー画面 (/review) でのみヘッダーを表示
   const showPcHeader = location.pathname.startsWith('/review') && auth.caregiverId;
 
-  // ★★★ 修正: ログアウトハンドラ ★★★
   const handleLogout = () => {
     auth.logout();
     navigate('/review'); // Kiosk ログイン画面に戻る
@@ -106,15 +103,13 @@ function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline /> 
       
-      {/* ★★★ 修正: auth.caregiverId がある場合のみヘッダーを表示 ★★★ */}
       {showPcHeader && (
         <AppBar position="static" color="default" elevation={1}>
           <Toolbar>
             <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-              KOENO-APP (v2.1) レビュー
+              KOENO-APP (v2.2) レビュー
             </Typography>
 
-            {/* ★★★ 修正: 管理者(isAdmin === true)の場合のみ表示 ★★★ */}
             {auth.isAdmin === true && (
               <Button
                 color="inherit"
@@ -130,7 +125,6 @@ function App() {
               <SettingsIcon />
             </IconButton>
             
-            {/* ★★★ 修正: ログアウトボタンを追加 ★★★ */}
             <IconButton color="inherit" onClick={handleLogout} title="ログアウト">
               <LogoutIcon />
             </IconButton>
@@ -153,22 +147,25 @@ function App() {
       />
 
       <Routes>
-        {/* --- PWA (スマホ録音) 画面 (変更なし) --- */}
+        {/* --- PWA (スマホ録音) 画面 --- */}
         <Route path="/" element={<AuthPage />} />
         <Route element={<ProtectedRoute />}>
           <Route path="/record" element={<RecordPage />} />
         </Route>
         
-        {/* --- PC版レビュー画面 (v2.1) --- */}
+        {/* --- PC版レビュー画面 --- */}
         <Route path="/review" element={<KioskAuthPage />} />
         
         <Route element={<KioskProtectedRoute />}>
-          {/* ★★★ v2.1 新ルーティング ★★★ */}
+          {/* ★★★ v2.2 現場用トップ画面 (デフォルト遷移先) ★★★ */}
+          <Route path="/review/staff" element={<StaffInputPage />} />
+
+          {/* 管理・詳細画面 */}
           <Route path="/review/list" element={<KirokuListPage />} />
           <Route path="/review/detail/:userId/:date" element={<KirokuDetailPage />} />
           <Route path="/review/adjust/:recordingId" element={<KirokuAdjustPage />} />
 
-          {/* 管理者用 (変更なし) */}
+          {/* 管理者用 */}
           <Route element={<AdminProtectedRoute />}>
             <Route path="/review/admin/users" element={<AdminUsersPage />} />
           </Route>

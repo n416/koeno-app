@@ -4,7 +4,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Body, Depend
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from contextlib import asynccontextmanager # ★追加
+from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 import databases
 import sqlalchemy
@@ -18,6 +18,8 @@ database = databases.Database(DATABASE_URL)
 metadata = sqlalchemy.MetaData()
 
 # --- テーブル定義 ---
+
+# 1. 介護士マスタ
 caregivers = sqlalchemy.Table(
     "caregivers", metadata,
     sqlalchemy.Column("caregiver_id", sqlalchemy.String, primary_key=True),
@@ -25,6 +27,7 @@ caregivers = sqlalchemy.Table(
     sqlalchemy.Column("created_at", sqlalchemy.DateTime, default=datetime.datetime.now(datetime.UTC), nullable=True),
 )
 
+# 2. 管理者テーブル
 administrators = sqlalchemy.Table(
     "administrators", metadata,
     sqlalchemy.Column("admin_id", sqlalchemy.Integer, primary_key=True, autoincrement=True),
@@ -33,6 +36,7 @@ administrators = sqlalchemy.Table(
     sqlalchemy.Column("granted_at", sqlalchemy.DateTime, default=datetime.datetime.now(datetime.UTC))
 )
 
+# 3. 録音データ
 recordings = sqlalchemy.Table(
     "recordings", metadata,
     sqlalchemy.Column("recording_id", sqlalchemy.Integer, primary_key=True, autoincrement=True),
@@ -46,16 +50,19 @@ recordings = sqlalchemy.Table(
     sqlalchemy.Column("created_at", sqlalchemy.DateTime),
 )
 
+# 4. 日報 (1日1レコードのまとめ)
 care_records = sqlalchemy.Table(
     "care_records", metadata,
     sqlalchemy.Column("care_record_id", sqlalchemy.Integer, primary_key=True, autoincrement=True),
     sqlalchemy.Column("user_id", sqlalchemy.String, index=True),
     sqlalchemy.Column("record_date", sqlalchemy.String, index=True),
     sqlalchemy.Column("final_text", sqlalchemy.Text),
+    sqlalchemy.Column("care_touch_data", sqlalchemy.JSON, nullable=True), # v4追加
     sqlalchemy.Column("last_updated_by", sqlalchemy.String),
     sqlalchemy.Column("updated_at", sqlalchemy.DateTime, default=datetime.datetime.now(datetime.UTC))
 )
 
+# 5. 録音の紐づけ管理
 recording_assignments = sqlalchemy.Table(
     "recording_assignments", metadata,
     sqlalchemy.Column("assignment_id", sqlalchemy.Integer, primary_key=True, autoincrement=True),
@@ -63,6 +70,19 @@ recording_assignments = sqlalchemy.Table(
     sqlalchemy.Column("user_id", sqlalchemy.String, index=True),
     sqlalchemy.Column("assigned_at", sqlalchemy.DateTime, default=datetime.datetime.now(datetime.UTC)),
     sqlalchemy.Column("assigned_by", sqlalchemy.String)
+)
+
+# 6. ★新規★ ケアイベント (時系列データ)
+care_events = sqlalchemy.Table(
+    "care_events", metadata,
+    sqlalchemy.Column("event_id", sqlalchemy.Integer, primary_key=True, autoincrement=True),
+    sqlalchemy.Column("user_id", sqlalchemy.String, index=True),
+    sqlalchemy.Column("event_timestamp", sqlalchemy.DateTime, index=True), # 発生日時
+    sqlalchemy.Column("event_type", sqlalchemy.String, default="care_touch"), # 'care_touch', 'voice', etc
+    sqlalchemy.Column("care_touch_data", sqlalchemy.JSON, nullable=True), # 構造化データ
+    sqlalchemy.Column("note_text", sqlalchemy.Text, nullable=True), # 個別メモ
+    sqlalchemy.Column("recorded_by", sqlalchemy.String), # 記録者
+    sqlalchemy.Column("created_at", sqlalchemy.DateTime, default=datetime.datetime.now(datetime.UTC)), # システム登録日時
 )
 
 # --- Pydanticモデル ---
@@ -87,6 +107,7 @@ class CareRecordInput(BaseModel):
     user_id: str
     record_date: str 
     final_text: str
+    care_touch_data: Optional[Dict[str, Any]] = None
 
 class CareRecordDateList(BaseModel):
     dates: List[str] 
@@ -95,6 +116,7 @@ class CareRecordDetail(BaseModel):
     user_id: str
     record_date: str
     final_text: str
+    care_touch_data: Optional[Dict[str, Any]] = None
     last_updated_by: Optional[str] = None 
     updated_at: Optional[datetime.datetime] = None 
 
@@ -125,6 +147,24 @@ class AssignedRecording(BaseModel):
     assignment_snapshot: Optional[Any] = None
     summary_drafts: Optional[Dict[str, str]] = None
 
+# ★新規★ イベント入力用
+class CareEventInput(BaseModel):
+    user_id: str
+    event_timestamp: str # ISO format string
+    event_type: str = "care_touch"
+    care_touch_data: Optional[Dict[str, Any]] = None
+    note_text: Optional[str] = None
+
+# ★新規★ イベント出力用
+class CareEventOutput(BaseModel):
+    event_id: int
+    user_id: str
+    event_timestamp: datetime.datetime
+    event_type: str
+    care_touch_data: Optional[Dict[str, Any]] = None
+    note_text: Optional[str] = None
+    recorded_by: Optional[str] = None
+
 # --- ライフサイクル管理 (lifespan) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -139,7 +179,7 @@ async def lifespan(app: FastAPI):
     print("データベース接続を切断しました。")
 
 # --- アプリ定義 ---
-app = FastAPI(lifespan=lifespan) # ★ここ重要
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -149,16 +189,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ★ ミドルウェア: フロントエンドからの /api リクエストのパスを修正
 @app.middleware("http")
 async def strip_api_prefix(request: Request, call_next):
     if request.url.path.startswith("/api/"):
-        new_path = request.url.path[4:] # "/api" を削除
+        new_path = request.url.path[4:]
         request.scope["path"] = new_path
     response = await call_next(request)
     return response
 
 # --- APIエンドポイント ---
+
+# 1. 録音アップロード
 @app.post("/upload_recording", response_model=RecordingResponse)
 async def upload_recording(
     audio_blob: UploadFile = File(...),
@@ -193,12 +234,14 @@ async def upload_recording(
     last_id = await database.execute(query)
     return {"recording_id": last_id, "ai_status": "pending", "message": "Accepted"}
 
+# 2. 認証
 @app.post("/authenticate")
 async def authenticate(req: AuthRequest = Body(...)):
     res = await database.fetch_one(caregivers.select().where(caregivers.c.caregiver_id == req.caregiver_id))
     if res: return {"status": "authenticated", "caregiver_id": req.caregiver_id}
     raise HTTPException(401, "ID not found")
 
+# 3. 日報関連 (既存)
 @app.get("/care_records", response_model=CareRecordDateList)
 async def get_dates(user_id: str = Query(...)):
     q = sqlalchemy.select(care_records.c.record_date).where(care_records.c.user_id == user_id).distinct()
@@ -208,7 +251,8 @@ async def get_dates(user_id: str = Query(...)):
 async def get_detail(user_id: str = Query(...), record_date: str = Query(...)):
     q = care_records.select().where((care_records.c.user_id == user_id) & (care_records.c.record_date == record_date)).order_by(care_records.c.updated_at.desc()).limit(1)
     res = await database.fetch_one(q)
-    if not res: return CareRecordDetail(user_id=user_id, record_date=record_date, final_text="")
+    if not res: 
+        return CareRecordDetail(user_id=user_id, record_date=record_date, final_text="", care_touch_data=None)
     return res
 
 @app.post("/save_care_record", status_code=201)
@@ -216,12 +260,33 @@ async def save_record(inp: CareRecordInput = Body(...), caller: str = Header(...
     q_check = care_records.select().where((care_records.c.user_id == inp.user_id) & (care_records.c.record_date == inp.record_date))
     exists = await database.fetch_one(q_check)
     now = datetime.datetime.now(datetime.UTC)
+    
     if exists:
-        await database.execute(care_records.update().where(care_records.c.care_record_id == exists.care_record_id).values(final_text=inp.final_text, last_updated_by=caller, updated_at=now))
+        await database.execute(
+            care_records.update()
+            .where(care_records.c.care_record_id == exists.care_record_id)
+            .values(
+                final_text=inp.final_text,
+                care_touch_data=inp.care_touch_data,
+                last_updated_by=caller, 
+                updated_at=now
+            )
+        )
         return {"status": "updated"}
-    await database.execute(care_records.insert().values(user_id=inp.user_id, record_date=inp.record_date, final_text=inp.final_text, last_updated_by=caller, updated_at=now))
+    
+    await database.execute(
+        care_records.insert().values(
+            user_id=inp.user_id, 
+            record_date=inp.record_date, 
+            final_text=inp.final_text, 
+            care_touch_data=inp.care_touch_data,
+            last_updated_by=caller, 
+            updated_at=now
+        )
+    )
     return {"status": "created"}
 
+# 4. 録音管理
 @app.get("/unassigned_recordings", response_model=List[UnassignedRecording])
 async def get_unassigned(caregiver_id: str = Query(...), record_date: str = Query(...)):
     assigned_ids = [r.recording_id for r in await database.fetch_all(sqlalchemy.select(recording_assignments.c.recording_id).distinct())]
@@ -253,6 +318,39 @@ async def save_assign(inp: AssignmentInput = Body(...), caller: str = Header(...
         await database.execute(recordings.update().where(recordings.c.recording_id == inp.recording_id).values(assignment_snapshot=inp.assignment_snapshot, summary_drafts=inp.summary_drafts))
     return {"status": "success"}
 
+# 5. ★新規★ 時系列イベントAPI
+@app.post("/save_event", status_code=201)
+async def save_event(inp: CareEventInput = Body(...), caller: str = Header(..., alias="X-Caller-ID")):
+    try:
+        ts = datetime.datetime.fromisoformat(inp.event_timestamp).astimezone(timezone.utc)
+    except:
+        ts = datetime.datetime.now(timezone.utc)
+
+    query = care_events.insert().values(
+        user_id=inp.user_id,
+        event_timestamp=ts,
+        event_type=inp.event_type,
+        care_touch_data=inp.care_touch_data,
+        note_text=inp.note_text,
+        recorded_by=caller,
+        created_at=datetime.datetime.now(timezone.utc)
+    )
+    await database.execute(query)
+    return {"status": "created"}
+
+@app.get("/daily_events", response_model=List[CareEventOutput])
+async def get_daily_events(user_id: str = Query(...), date: str = Query(...)):
+    # date (YYYY-MM-DD) に一致するイベントを取得 (JST基準)
+    jst_date = sqlalchemy.func.date(sqlalchemy.func.datetime(care_events.c.event_timestamp, '+9 hours'))
+    
+    q = care_events.select().where(
+        (care_events.c.user_id == user_id) & 
+        (jst_date == date)
+    ).order_by(care_events.c.event_timestamp.desc())
+    
+    return await database.fetch_all(q)
+
+# 6. 管理者機能
 async def verify_admin(x: str = Header(None)):
     if not x or not await database.fetch_one(administrators.select().where(administrators.c.caregiver_id == x)): raise HTTPException(403)
     return x

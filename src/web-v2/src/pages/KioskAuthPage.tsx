@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
-// ★★★ Task 2.2: MUIコンポーネントをインポート ★★★
+// MUIコンポーネント
 import {
   Container,
   Box,
@@ -10,25 +10,22 @@ import {
   Alert,
   CircularProgress
 } from '@mui/material';
-import { Nfc as NfcIcon } from '@mui/icons-material'; // アイコン
+import { Nfc as NfcIcon } from '@mui/icons-material';
 
-// .env から API のベース URL を取得 ( "/api" または undefined が入る)
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
-// ★★★ v2.1 修正: /api が重複しないよう修正 ★★★
 const AUTH_URL = (API_BASE_URL.endsWith('/api') ? API_BASE_URL : `${API_BASE_URL}/api`) + '/authenticate';
 
-
 /**
- * Task 6.1 (Task 7.4 修正): PC版 認証ページ (KioskAuthPage)
- * Task 2.2: MUI化
+ * PC版 認証ページ (KioskAuthPage)
  */
 export const KioskAuthPage = () => {
   const [inputBuffer, setInputBuffer] = useState('');
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false); // ★ 認証中ローディング
+  const [loading, setLoading] = useState(false);
   const auth = useAuth();
   const navigate = useNavigate();
   
+  // input要素への参照
   const hiddenInputRef = useRef<HTMLInputElement>(null);
 
   const focusInput = () => {
@@ -41,7 +38,6 @@ export const KioskAuthPage = () => {
     focusInput();
   }, []);
 
-  // ★★★ 修正: 認証API呼び出しと管理者チェックを共通化 ★★★
   const attemptLogin = async (id: string) => {
     if (id.length === 0) {
       setError('IDが入力されていません');
@@ -52,70 +48,55 @@ export const KioskAuthPage = () => {
     setError('認証中...');
 
     try {
-      // 1. ID が DB に存在するか (認証)
       const response = await fetch(AUTH_URL, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ caregiver_id: id })
       });
 
       if (response.ok) {
-        // 2. ★★★ 認証成功 → ログイン (権限チェックも内包) ★★★
         console.log(`[KioskAuth] 認証成功: ${id}`);
         setError('');
         
-        // auth.login() が isAdmin のセットまで await してくれる
         await auth.login(id); 
         
-        // 3. 一覧画面へ遷移
-        navigate('/review/list'); 
+        // ★ 遷移先を現場用画面に変更
+        navigate('/review/staff'); 
         
       } else {
-        // ★ API認証失敗 (401 Unauthorized など)
         const errMsg = await response.text();
         setError(errMsg || '認証に失敗しました。IDが正しくありません。');
-        setInputBuffer(''); // バッファをクリア
+        setInputBuffer('');
       }
       
     } catch (err) {
-      // (Failed to fetch など、サーバーが落ちている場合)
       console.error('認証APIエラー:', err);
       if (err instanceof Error) {
         setError(`エラー: 認証サーバーに接続できません: ${err.message}`);
       } else {
         setError('エラー: 認証サーバーに接続できません。');
       }
-      setInputBuffer(''); // バッファをクリア
+      setInputBuffer('');
     }
     
     setLoading(false);
   };
 
-
-  /**
-   * 認証APIをコールするロジック (Task 7.4)
-   */
   const handleKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
-    // Enterキーが押された場合のみ処理
     if (e.key === 'Enter') {
       const trimmedId = inputBuffer.trim();
-      // ★★★ 修正: 共通認証関数を呼び出す ★★★
       await attemptLogin(trimmedId);
     }
   };
   
-  // Inputの値が変更されたときのハンドラ (手入力 ＆ NFCリーダー入力)
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
      setInputBuffer(e.target.value);
   };
 
   return (
-    // ★★★ Task 2.2: MUI化 ★★★
     <Container 
       maxWidth="sm" 
-      onClick={focusInput} // 画面クリックで常に入力欄にフォーカス
+      onClick={focusInput}
       sx={{ 
         height: '100vh', 
         display: 'flex', 
@@ -139,24 +120,29 @@ export const KioskAuthPage = () => {
           （またはIDを手入力してEnterキーを押してください）
         </Typography>
 
-        <input
+        {/* ★ 修正: MUIのBoxをinputタグとしてレンダリング 
+          - sxプロパティでスタイル定義 (no-inline-styles 対応)
+          - aria-label でラベル付与 (axe/forms 対応)
+        */}
+        <Box
+          component="input"
           ref={hiddenInputRef}
-          type="text" // (passwordにするとNFCリーダーの入力が見えないためtext)
+          type="text" // passwordではなくtext (リーダー入力確認用)
           value={inputBuffer}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
-          onBlur={focusInput} // フォーカスが外れても即座にフォーカスし直す
+          onBlur={focusInput}
           autoFocus
-          disabled={loading} // ★ 認証中は入力を無効化
-          style={{
-            // 隠しinput (MUI化対象外)
+          disabled={loading}
+          aria-label="NFCリーダー入力用" // ★ アクセシビリティ対応
+          sx={{
             position: 'absolute',
             opacity: 0,
             top: '-1000px',
+            pointerEvents: 'none' // マウス操作を透過させる
           }}
         />
         
-        {/* --- ローディング・エラー表示 --- */}
         {loading && (
           <Box sx={{ mt: 3, display: 'flex', alignItems: 'center', gap: 2 }}>
             <CircularProgress size={24} />

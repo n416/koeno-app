@@ -10,7 +10,6 @@ export default defineConfig({
       '.ngrok-free.dev',
       '.ngrok-free.app'
     ],
-    // APIサーバーへのプロキシ
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8000',
@@ -21,13 +20,16 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      strategies: 'injectManifest',
-      srcDir: 'src',
-      filename: 'sw.ts',
-      injectRegister: 'auto', // ★ここを 'auto' に変更 (null から変更)
+      // ★ 全自動モードを明示
+      strategies: 'generateSW', 
+      
+      // ★★★ 重要: ここにあった srcDir と filename は削除しました！ ★★★
+      
+      registerType: 'autoUpdate',
+      
       devOptions: {
         enabled: true,
-        type: 'module', // ★念のため明示
+        // type: 'module', // 不要なので削除
       },
       manifest: {
         name: 'KOENO-APP (Offline)',
