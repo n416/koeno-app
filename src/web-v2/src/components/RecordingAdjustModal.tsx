@@ -3,7 +3,6 @@ import { useAuth } from '../contexts/AuthContext';
 
 // MUI Components
 import {
-  Box,
   Button,
   Paper,
   Table,
@@ -25,11 +24,11 @@ import {
   DialogActions,
   Chip
 } from '@mui/material';
-import { 
-  Delete as DeleteIcon, 
-  AddCircleOutline as AddIcon, 
-  Close as CloseIcon, 
-  Check as CheckIcon, 
+import {
+  Delete as DeleteIcon,
+  AddCircleOutline as AddIcon,
+  Close as CloseIcon,
+  Check as CheckIcon,
   RestartAlt as ResetIcon,
   WarningAmber as WarningIcon,
   History as HistoryIcon // ★ 追加
@@ -79,7 +78,7 @@ interface TranscriptionResponse {
 interface Props {
   open: boolean;
   onClose: () => void;
-  recordingId: number | null; 
+  recordingId: number | null;
   onSaveSuccess: () => void;
   // ★ 追加: 履歴モードフラグ
   isHistoryMode?: boolean;
@@ -94,7 +93,7 @@ export const RecordingAdjustModal: React.FC<Props> = ({ open, onClose, recording
   const [tableRows, setTableRows] = useState<TableRowData[]>([]);
   const [activeGroups, setActiveGroups] = useState<Map<string, AssignmentRow>>(new Map());
   const [draggedRowId, setDraggedRowId] = useState<string | null>(null);
-  
+
   const [subDialogOpen, setSubDialogOpen] = useState(false);
   const [assignmentCounter, setAssignmentCounter] = useState(0);
 
@@ -173,7 +172,7 @@ export const RecordingAdjustModal: React.FC<Props> = ({ open, onClose, recording
       id: newGroupId,
       type: 'assignment',
       userId: user.id,
-      userName: user.displayName, 
+      userName: user.displayName,
       userColor: user.color,
       name: user.displayName,
       color: user.color,
@@ -239,11 +238,11 @@ export const RecordingAdjustModal: React.FC<Props> = ({ open, onClose, recording
     const targetIndex = tableRows.findIndex(r => r.id === targetRow.id);
     const insertIndex = targetIndex === -1 ? tableRows.length : targetIndex;
     tableRows.splice(insertIndex, 0, draggedItem);
-    
-    setTableRows(prev => {
-        const updated = updateAssignments([...tableRows]);
-        recalculateState(updated);
-        return updated;
+
+    setTableRows(() => {
+      const updated = updateAssignments([...tableRows]);
+      recalculateState(updated);
+      return updated;
     });
     setDraggedRowId(null);
   };
@@ -282,9 +281,9 @@ export const RecordingAdjustModal: React.FC<Props> = ({ open, onClose, recording
     if (!auth.caregiverId || !recordingId) return;
     setSaving(true);
     setError(null);
-    
+
     // ★ 履歴モードなら、全グループの processed フラグを強制的に true にする
-    const rowsToSave = isHistoryMode 
+    const rowsToSave = isHistoryMode
       ? tableRows.map(row => (row.type === 'assignment' ? { ...row, processed: true } : row))
       : tableRows;
 
@@ -301,7 +300,7 @@ export const RecordingAdjustModal: React.FC<Props> = ({ open, onClose, recording
           recording_id: recordingId,
           user_ids: assignedUserIds,
           assignment_snapshot: rowsToSave, // 修正済みデータを送信
-          summary_drafts: {} 
+          summary_drafts: {}
         }),
       });
 
@@ -318,10 +317,10 @@ export const RecordingAdjustModal: React.FC<Props> = ({ open, onClose, recording
 
   return (
     <>
-      <Dialog 
-        open={open} 
-        onClose={saving ? undefined : onClose} 
-        fullWidth 
+      <Dialog
+        open={open}
+        onClose={saving ? undefined : onClose}
+        fullWidth
         maxWidth="lg"
         aria-labelledby="adjust-dialog-title"
       >
@@ -337,15 +336,15 @@ export const RecordingAdjustModal: React.FC<Props> = ({ open, onClose, recording
             <CloseIcon />
           </IconButton>
         </DialogTitle>
-        
+
         <DialogContent dividers>
           <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
-             <Button variant="contained" startIcon={<AddIcon />} onClick={() => setSubDialogOpen(true)} disabled={loading || saving}>
-               割り当て先を追加
-             </Button>
-             <Button variant="outlined" color="error" startIcon={<ResetIcon />} onClick={handleClearAllAssignments} disabled={loading || saving} sx={{ ml: 'auto' }}>
-               全解除
-             </Button>
+            <Button variant="contained" startIcon={<AddIcon />} onClick={() => setSubDialogOpen(true)} disabled={loading || saving}>
+              割り当て先を追加
+            </Button>
+            <Button variant="outlined" color="error" startIcon={<ResetIcon />} onClick={handleClearAllAssignments} disabled={loading || saving} sx={{ ml: 'auto' }}>
+              全解除
+            </Button>
           </Stack>
 
           {loading && <CircularProgress sx={{ mb: 2, display: 'block', mx: 'auto' }} />}
@@ -380,7 +379,7 @@ export const RecordingAdjustModal: React.FC<Props> = ({ open, onClose, recording
                     // ★ 履歴モードなら処理済みでもドラッグ可能にする
                     // ★ ただし視覚的には「入力済み」とわかるようにしておく
                     const canDrag = isHistoryMode ? true : !isProcessed;
-                    
+
                     return (
                       <TableRow
                         key={row.id}
@@ -391,14 +390,14 @@ export const RecordingAdjustModal: React.FC<Props> = ({ open, onClose, recording
                         sx={{
                           cursor: canDrag ? 'grab' : 'default',
                           // 履歴モードなら色は通常通り、そうでなければグレー
-                          bgcolor: (isProcessed && !isHistoryMode) ? '#e0e0e0' : row.userColor, 
+                          bgcolor: (isProcessed && !isHistoryMode) ? '#e0e0e0' : row.userColor,
                           opacity: (isProcessed && !isHistoryMode) ? 0.7 : 1,
                           '&:active': { cursor: canDrag ? 'grabbing' : 'default' }
                         }}
                       >
                         <TableCell colSpan={4} sx={{ color: (isProcessed && !isHistoryMode) ? '#666' : '#fff', fontWeight: 'bold' }}>
                           ▼ {row.userName} グループ ▼
-                          {isProcessed && <span style={{marginLeft: 10, fontSize: '0.8em'}}>（入力済み）</span>}
+                          {isProcessed && <span style={{ marginLeft: 10, fontSize: '0.8em' }}>（入力済み）</span>}
                         </TableCell>
                         <TableCell align="center">
                           <IconButton size="small" onClick={() => handleDeleteAssignment(row.id)} sx={{ color: (isProcessed && !isHistoryMode) ? '#666' : '#fff' }} disabled={saving}>
