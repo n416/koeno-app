@@ -15,231 +15,202 @@ import {
   IconButton,
   CircularProgress,
   Alert,
-  Link as MuiLink
+  Link as MuiLink,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogActions,
+  Stack
 } from '@mui/material';
-import { Delete as DeleteIcon } from '@mui/icons-material';
+import { 
+  Delete as DeleteIcon, 
+  QrCode as QrCodeIcon, 
+  Refresh as RefreshIcon,
+  Download as DownloadIcon // ★ 追加
+} from '@mui/icons-material';
 import { Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { QRCodeSVG } from 'qrcode.react';
 
-// APIから返される Caregiver の型 (main.py の CaregiverInfo に合わせる)
+// APIから返される Caregiver の型
 interface Caregiver {
   caregiver_id: string;
   name: string | null;
-  created_at: string | null; // (v1.8修正: null許容)
+  created_at: string | null;
+  qr_token: string | null;
 }
 
 // .env から API のベース URL を取得
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
-/**
- * Task 1.3 & 1.4: IDマスタ管理ページ (MUI実装)
- */
 export const AdminUsersPage = () => {
   const [caregivers, setCaregivers] = useState<Caregiver[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // 新規登録フォーム用のState
+  // 新規登録フォーム用
   const [newId, setNewId] = useState('');
   const [newName, setNewName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // ★★★ Task 8.1 (フロント対応): 認証フックを使用 ★★★
+  // QRモーダル用
+  const [qrModalOpen, setQrModalOpen] = useState(false);
+  const [selectedQrUser, setSelectedQrUser] = useState<Caregiver | null>(null);
+  const [isResetting, setIsResetting] = useState(false);
+
   const auth = useAuth();
-  const callerId = auth.caregiverId; // ログイン中の管理者ID
+  const callerId = auth.caregiverId;
+  const API_URL = `${API_BASE_URL}/admin/caregivers`;
 
-  const API_URL = `${API_BASE_URL}/admin/caregivers`; // -> /api/admin/caregivers
-
-  // 1. (GET) 介護士一覧の取得
   const fetchCaregivers = async () => {
     setLoading(true);
     setError(null);
-
-    // ★★★ Task 8.1 (フロント対応): 認証チェック ★★★
     if (!callerId) {
       setError("認証情報が見つかりません。");
       setLoading(false);
       return;
     }
-
     try {
-      // ★★★ Task 8.1 (フロント対応): X-Caller-ID ヘッダーを追加 ★★★
       const response = await fetch(API_URL, {
         method: 'GET',
-        headers: {
-          'X-Caller-ID': callerId,
-        }
+        headers: { 'X-Caller-ID': callerId }
       });
-      if (!response.ok) {
-        // (403 Forbidden が返ることを期待)
-        const errMsg = await response.text();
-        throw new Error(errMsg || `APIエラー: ${response.status}`);
-      }
+      if (!response.ok) throw new Error(await response.text() || `APIエラー: ${response.status}`);
       const data: Caregiver[] = await response.json();
       setCaregivers(data);
     } catch (err) {
-      if (err instanceof Error) {
-        setError(`一覧の読み込みに失敗しました: ${err.message}`);
-      } else {
-        setError('一覧の読み込みに失敗しました。');
-      }
+      setError(err instanceof Error ? err.message : '一覧の読み込みに失敗しました。');
     }
     setLoading(false);
   };
 
-  // 2. (POST) 新規登録
   const handleAdd = async (e: FormEvent) => {
     e.preventDefault();
-    if (!newId) {
-      setError('Caregiver ID は必須です。');
-      return;
-    }
-    // ★★★ Task 8.1 (フロント対応): 認証チェック ★★★
-    if (!callerId) {
-      setError("認証情報が見つかりません。");
-      return;
-    }
-
+    if (!newId || !callerId) return;
     setIsSubmitting(true);
     setError(null);
-
     try {
-      // ★★★ Task 8.1 (フロント対応): X-Caller-ID ヘッダーを追加 ★★★
       const response = await fetch(API_URL, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Caller-ID': callerId,
-        },
-        body: JSON.stringify({
-          caregiver_id: newId,
-          name: newName || null,
-        }),
+        headers: { 'Content-Type': 'application/json', 'X-Caller-ID': callerId },
+        body: JSON.stringify({ caregiver_id: newId, name: newName || null }),
       });
-
-      if (!response.ok) {
-        const errMsg = await response.text();
-        if (response.status === 409) {
-          throw new Error(errMsg || 'IDが重複しています。');
-        }
-        // (403 Forbidden が返ることを期待)
-        throw new Error(errMsg || `登録エラー: ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(await response.text() || `登録エラー: ${response.status}`);
       const newData: Caregiver = await response.json();
       setCaregivers([newData, ...caregivers]);
       setNewId('');
       setNewName('');
-
     } catch (err) {
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError('IDの登録に失敗しました。');
-      }
+      setError(err instanceof Error ? err.message : 'IDの登録に失敗しました。');
     }
     setIsSubmitting(false);
   };
 
-  // 3. (DELETE) 削除
   const handleDelete = async (idToDelete: string) => {
-    if (!window.confirm(`ID: ${idToDelete} を本当に削除しますか？`)) {
-      return;
-    }
-
-    // ★★★ Task 8.1 (フロント対応): 認証チェック ★★★
-    if (!callerId) {
-      setError("認証情報が見つかりません。");
-      return;
-    }
-
+    if (!window.confirm(`ID: ${idToDelete} を本当に削除しますか？`)) return;
+    if (!callerId) return;
     setError(null);
     try {
-      // ★★★ Task 8.1 (フロント対応): X-Caller-ID ヘッダーを追加 ★★★
       const response = await fetch(`${API_URL}/${idToDelete}`, {
         method: 'DELETE',
-        headers: {
-          'X-Caller-ID': callerId,
-        }
+        headers: { 'X-Caller-ID': callerId }
       });
-
-      if (!response.ok) {
-        const errMsg = await response.text();
-        // (403 Forbidden / 404 Not Found が返ることを期待)
-        throw new Error(errMsg || `削除エラー: ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(await response.text() || `削除エラー: ${response.status}`);
       setCaregivers(caregivers.filter(c => c.caregiver_id !== idToDelete));
-
     } catch (err) {
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError('IDの削除に失敗しました。');
-      }
+      setError(err instanceof Error ? err.message : 'IDの削除に失敗しました。');
     }
   };
 
-  // --- 初期読み込み ---
-  useEffect(() => {
-    fetchCaregivers();
-  }, [callerId]); // ★ 依存配列に callerId を追加
+  // QRコード表示
+  const handleOpenQr = (user: Caregiver) => {
+    setSelectedQrUser(user);
+    setQrModalOpen(true);
+  };
 
-  // --- JSX (MUI) ---
+  // QR再発行
+  const handleResetQr = async () => {
+    if (!selectedQrUser || !callerId) return;
+    if (!window.confirm("QRコードを再発行します。\n古いQRコードは使用できなくなりますがよろしいですか？")) return;
+    
+    setIsResetting(true);
+    try {
+      const response = await fetch(`${API_URL}/${selectedQrUser.caregiver_id}/reset_qr`, {
+        method: 'POST',
+        headers: { 'X-Caller-ID': callerId }
+      });
+      if (!response.ok) throw new Error(await response.text() || "再発行エラー");
+      
+      const updatedUser: Caregiver = await response.json();
+      
+      // リストとモーダルの表示を更新
+      setCaregivers(caregivers.map(c => c.caregiver_id === updatedUser.caregiver_id ? updatedUser : c));
+      setSelectedQrUser(updatedUser);
+      
+    } catch(e) {
+      alert("再発行に失敗しました: " + e);
+    }
+    setIsResetting(false);
+  };
+
+  // ★ 追加: QRコードダウンロード機能
+  const handleDownloadQR = (userName: string) => {
+    const svg = document.getElementById('qr-code-svg');
+    if (!svg) return;
+
+    // 1. SVGデータを文字列化
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+
+    // 2. Base64エンコードしてImageオブジェクトにロード
+    img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+
+    img.onload = () => {
+      // 3. Canvasに描画してPNG化
+      // (解像度を上げるため、元のSVGサイズより大きく描画しても良いが、ここでは等倍)
+      canvas.width = img.width; 
+      canvas.height = img.height;
+      
+      if (ctx) {
+        // 白背景を描画（PNG透過対策）
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+      }
+      
+      const pngFile = canvas.toDataURL('image/png');
+      
+      // 4. リンクを作成してクリック
+      const downloadLink = document.createElement('a');
+      downloadLink.download = `QR_${userName}.png`;
+      downloadLink.href = pngFile;
+      downloadLink.click();
+    };
+  };
+
+  useEffect(() => { fetchCaregivers(); }, [callerId]);
+
   return (
     <Container maxWidth="md">
       <Box sx={{ my: 4 }}>
-        <Typography variant="h4" component="h1" gutterBottom>
-          IDマスタ管理
-        </Typography>
-        <MuiLink component={RouterLink} to="/review/dashboard">
-          ← ダッシュボードに戻る
-        </MuiLink>
+        <Typography variant="h4" component="h1" gutterBottom>IDマスタ管理</Typography>
+        <MuiLink component={RouterLink} to="/review/dashboard">← ダッシュボードに戻る</MuiLink>
 
-        {/* --- 1. 新規登録フォーム --- */}
-        {/* ★★★ 修正: backgroundColor: 'grey.900' を削除 ★★★ */}
         <Paper sx={{ p: 2, mt: 2, mb: 4 }}>
           <Typography variant="h6">新規ID登録</Typography>
           <Box component="form" onSubmit={handleAdd} sx={{ display: 'flex', gap: 2, mt: 2, alignItems: 'center' }}>
-            <TextField
-              label="Caregiver ID (必須)"
-              value={newId}
-              onChange={(e) => setNewId(e.target.value)}
-              required
-              disabled={isSubmitting}
-              sx={{ flexGrow: 1 }}
-              variant="outlined" // (明示)
-            />
-            <TextField
-              label="名前 (任意)"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              disabled={isSubmitting}
-              sx={{ flexGrow: 1 }}
-              variant="outlined" // (明示)
-            />
-            <Button
-              type="submit"
-              variant="contained"
-              color="primary"
-              disabled={isSubmitting}
-              sx={{ height: '56px' }}
-            >
-              {isSubmitting ? <CircularProgress size={24} /> : '登録'}
-            </Button>
+            <TextField label="Caregiver ID (必須)" value={newId} onChange={(e) => setNewId(e.target.value)} required disabled={isSubmitting} sx={{ flexGrow: 1 }} variant="outlined" />
+            <TextField label="名前 (任意)" value={newName} onChange={(e) => setNewName(e.target.value)} disabled={isSubmitting} sx={{ flexGrow: 1 }} variant="outlined" />
+            <Button type="submit" variant="contained" color="primary" disabled={isSubmitting} sx={{ height: '56px' }}>{isSubmitting ? <CircularProgress size={24} /> : '登録'}</Button>
           </Box>
         </Paper>
 
-        {/* --- 2. エラー表示 --- */}
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
-        {/* --- 3. 介護士一覧テーブル --- */}
-        <Typography variant="h6" gutterBottom>
-          登録済みID一覧
-        </Typography>
-        {loading ? (
-          <CircularProgress />
-        ) : (
+        <Typography variant="h6" gutterBottom>登録済みID一覧</Typography>
+        {loading ? <CircularProgress /> : (
           <TableContainer component={Paper}>
             <Table>
               <TableHead>
@@ -247,30 +218,23 @@ export const AdminUsersPage = () => {
                   <TableCell>Caregiver ID</TableCell>
                   <TableCell>名前</TableCell>
                   <TableCell>登録日時 (UTC)</TableCell>
+                  <TableCell align="center">QR</TableCell>
                   <TableCell align="right">操作</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {caregivers.map((c) => (
-                  <TableRow
-                    key={c.caregiver_id}
-                    hover
-                  >
-                    <TableCell component="th" scope="row">
-                      {c.caregiver_id}
-                    </TableCell>
+                  <TableRow key={c.caregiver_id} hover>
+                    <TableCell component="th" scope="row">{c.caregiver_id}</TableCell>
                     <TableCell>{c.name || '(未設定)'}</TableCell>
-                    {/* ★ v1.8 エラー修正: c.created_at が null の可能性に対応 */}
-                    <TableCell>
-                      {c.created_at ? new Date(c.created_at).toLocaleString('ja-JP') : '(日時不明)'}
+                    <TableCell>{c.created_at ? new Date(c.created_at).toLocaleString('ja-JP') : '(日時不明)'}</TableCell>
+                    <TableCell align="center">
+                      <IconButton onClick={() => handleOpenQr(c)} color="primary" title="QRコードを表示">
+                        <QrCodeIcon />
+                      </IconButton>
                     </TableCell>
                     <TableCell align="right">
-                      <IconButton
-                        edge="end"
-                        aria-label="delete"
-                        onClick={() => handleDelete(c.caregiver_id)}
-                        color="error"
-                      >
+                      <IconButton onClick={() => handleDelete(c.caregiver_id)} color="error" title="削除">
                         <DeleteIcon />
                       </IconButton>
                     </TableCell>
@@ -281,6 +245,55 @@ export const AdminUsersPage = () => {
           </TableContainer>
         )}
       </Box>
+
+      {/* QR表示モーダル */}
+      <Dialog open={qrModalOpen} onClose={() => setQrModalOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ textAlign: 'center' }}>ログイン用QRコード</DialogTitle>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 3 }}>
+          {selectedQrUser && selectedQrUser.qr_token ? (
+            <>
+              <Box sx={{ p: 2, border: '4px solid #333', borderRadius: 2, bgcolor: 'white' }}>
+                {/* ★ id="qr-code-svg" を追加 */}
+                <QRCodeSVG id="qr-code-svg" value={selectedQrUser.qr_token} size={200} level="H" />
+              </Box>
+              <Typography variant="h6" sx={{ mt: 2, fontWeight: 'bold' }}>
+                {selectedQrUser.name || '名称未設定'}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                ID: {selectedQrUser.caregiver_id}
+              </Typography>
+              
+              {/* ボタン群 */}
+              <Stack direction="row" spacing={2} sx={{ mt: 4 }}>
+                {/* ★ ダウンロードボタン追加 */}
+                <Button 
+                  startIcon={<DownloadIcon />} 
+                  variant="contained"
+                  onClick={() => handleDownloadQR(selectedQrUser.name || selectedQrUser.caregiver_id)}
+                >
+                  ダウンロード
+                </Button>
+
+                <Button 
+                  startIcon={<RefreshIcon />} 
+                  color="error" 
+                  variant="outlined" 
+                  onClick={handleResetQr}
+                  disabled={isResetting}
+                >
+                  {isResetting ? '更新中...' : '再発行'}
+                </Button>
+              </Stack>
+            </>
+          ) : (
+            <Typography>データ読み込みエラー</Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setQrModalOpen(false)}>閉じる</Button>
+        </DialogActions>
+      </Dialog>
+
     </Container>
   );
 };
