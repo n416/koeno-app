@@ -1,9 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box, Button, Typography, Grid, Chip, TextField, Divider, Paper, Stack,
-  Slider, CircularProgress
+  Slider, CircularProgress, Card, CardContent, CardHeader, Popover
 } from '@mui/material';
-import { AccessTime as TimeIcon } from '@mui/icons-material';
+import { 
+  AccessTime as TimeIcon, 
+  Place as PlaceIcon, 
+  Category as CategoryIcon,
+  NoteAlt as NoteIcon,
+  Save as SaveIcon
+} from '@mui/icons-material';
 import lifeSchema from '../data/life_schema.json';
 
 // --- 型定義 ---
@@ -28,29 +34,108 @@ interface CareTouchProps {
   onSave: (data: CareTouchRecord) => void;
   isSaving?: boolean;
   targetDate: Date;
-  // ★ 追加: スライダーの初期位置を指定する時刻 (録音時刻など)
   initialTime?: Date;
 }
 
-// ★ StaffInputPageでも使うのでexport
-export const CATEGORY_STYLES: Record<string, { main: string, light: string, dark: string }> = {
-  orange: { main: '#f97316', light: '#ffedd5', dark: '#c2410c' },
-  green: { main: '#16a34a', light: '#dcfce7', dark: '#15803d' },
-  blue: { main: '#2563eb', light: '#dbeafe', dark: '#1d4ed8' },
-  indigo: { main: '#4f46e5', light: '#e0e7ff', dark: '#3730a3' },
-  red: { main: '#dc2626', light: '#fee2e2', dark: '#b91c1c' },
-  purple: { main: '#9333ea', light: '#f3e8ff', dark: '#7e22ce' },
-  teal: { main: '#0d9488', light: '#ccfbf1', dark: '#0f766e' },
-  gray: { main: '#64748b', light: '#f1f5f9', dark: '#334155' }
+// --- ドラムロール部品 (ラベルを除去して純粋なホイール化) ---
+const WheelColumn = ({ options, value, onChange }: { options: number[], value: number, onChange: (val: number) => void }) => {
+  const itemHeight = 40; // 項目の高さ
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // 表示用に直近の値を選択
+  const displayValue = options.reduce((prev, curr) => 
+    Math.abs(curr - value) < Math.abs(prev - value) ? curr : prev
+  );
+
+  useEffect(() => {
+    if (containerRef.current) {
+      const index = options.indexOf(displayValue);
+      if (index !== -1) {
+        containerRef.current.scrollTop = index * itemHeight;
+      }
+    }
+  }, [displayValue, options]);
+
+  const handleClick = (val: number) => {
+    onChange(val);
+    if (containerRef.current) {
+      const index = options.indexOf(val);
+      if (index !== -1) {
+        containerRef.current.scrollTo({ top: index * itemHeight, behavior: 'smooth' });
+      }
+    }
+  };
+
+  return (
+    <Box
+      ref={containerRef}
+      sx={{
+        height: itemHeight * 5, // 5行表示 (200px)
+        width: 70,
+        overflowY: 'auto',
+        scrollSnapType: 'y mandatory',
+        scrollbarWidth: 'none',
+        '&::-webkit-scrollbar': { display: 'none' },
+        position: 'relative',
+        cursor: 'pointer',
+        zIndex: 1,
+        // 上下のフェードアウト効果
+        maskImage: 'linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%)',
+        WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%)',
+      }}
+    >
+      {/* 上下の余白 (2行分) */}
+      <Box sx={{ height: itemHeight * 2 }} />
+      {options.map((opt) => {
+        const isSelected = opt === displayValue;
+        return (
+          <Box
+            key={opt}
+            onClick={() => handleClick(opt)}
+            sx={{
+              height: itemHeight,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              scrollSnapAlign: 'center',
+              fontWeight: isSelected ? 'bold' : 'normal',
+              color: isSelected ? 'primary.main' : 'text.disabled',
+              fontSize: isSelected ? '1.5rem' : '1.1rem',
+              transition: 'all 0.2s ease-out',
+              transform: isSelected ? 'scale(1.1)' : 'scale(1)',
+            }}
+          >
+            {String(opt).padStart(2, '0')}
+          </Box>
+        );
+      })}
+      <Box sx={{ height: itemHeight * 2 }} />
+    </Box>
+  );
 };
 
-// 時間帯定義 (入力用)
+
+// カラー定義
+export const CATEGORY_STYLES: Record<string, { main: string, light: string, dark: string }> = {
+  orange: { main: '#f97316', light: '#fff7ed', dark: '#c2410c' },
+  green:  { main: '#10b981', light: '#ecfdf5', dark: '#047857' },
+  blue:   { main: '#3b82f6', light: '#eff6ff', dark: '#1d4ed8' },
+  indigo: { main: '#6366f1', light: '#eef2ff', dark: '#4338ca' },
+  red:    { main: '#ef4444', light: '#fef2f2', dark: '#b91c1c' },
+  purple: { main: '#a855f7', light: '#faf5ff', dark: '#7e22ce' },
+  teal:   { main: '#14b8a6', light: '#f0fdfa', dark: '#0f766e' },
+  gray:   { main: '#64748b', light: '#f8fafc', dark: '#334155' }
+};
+
+// 時間帯定義
 const TIME_ZONES = [
-  { id: 'early_night', label: '深夜(早)', start: 0, end: 3, color: '#475569' },
-  { id: 'morning', label: '午前', start: 3, end: 12, color: '#ea580c' },
-  { id: 'afternoon', label: '午後', start: 12, end: 18, color: '#ca8a04' },
-  { id: 'night', label: '夜', start: 18, end: 24, color: '#1e3a8a' },
+  { id: 'early_night', label: '深夜(早)', start: 0, end: 5, color: '#64748b' },
+  { id: 'morning',     label: '午前',     start: 5, end: 12, color: '#f59e0b' },
+  { id: 'afternoon',   label: '午後',     start: 12, end: 18, color: '#f97316' },
+  { id: 'night',       label: '夜間',     start: 18, end: 24, color: '#3b82f6' },
 ];
+
+const MARK_VALUES = [0, 6, 12, 18, 24];
 
 export const CareTouch: React.FC<CareTouchProps> = ({ initialData, onSave, isSaving = false, targetDate, initialTime }) => {
   const [selectedPlace, setSelectedPlace] = useState<string | null>(null);
@@ -59,9 +144,10 @@ export const CareTouch: React.FC<CareTouchProps> = ({ initialData, onSave, isSav
   const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
   const [note, setNote] = useState('');
 
-  // 時間管理 (分)
   const [currentInputTime, setCurrentInputTime] = useState<number>(0);
   const [activeZoneId, setActiveZoneId] = useState<string | null>(null);
+
+  const [anchorEl, setAnchorEl] = useState<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setSelectedPlace(initialData?.place || null);
@@ -72,23 +158,21 @@ export const CareTouch: React.FC<CareTouchProps> = ({ initialData, onSave, isSav
     setSelectedConditions(initialData?.conditions || []);
     setNote(initialData?.note || '');
 
-    // ★ 修正: 時刻初期化ロジック
-    // 1. initialTime が指定されていればそれを使う (録音時刻)
-    // 2. なければ現在時刻
     const baseTime = initialTime || new Date();
     const minutes = baseTime.getHours() * 60 + baseTime.getMinutes();
     setCurrentInputTime(minutes);
 
-    // ゾーンの自動選択
+    updateActiveZone(minutes);
+  }, [initialData, initialTime]);
+
+  const updateActiveZone = (minutes: number) => {
     const hour = Math.floor(minutes / 60);
-    const zone = TIME_ZONES.find(z => hour >= z.start && hour < z.end);
+    const searchHour = hour === 24 ? 23 : hour;
+    const zone = TIME_ZONES.find(z => searchHour >= z.start && searchHour < z.end);
     if (zone) {
       setActiveZoneId(zone.id);
-    } else {
-      // マッチしない場合(24時ジャストなど)のフォールバック
-      setActiveZoneId('morning');
     }
-  }, [initialData, initialTime]); // initialTimeの変更も監視
+  };
 
   const handleCategoryChange = (category: SchemaCategory) => {
     setSelectedCategory(category);
@@ -107,15 +191,33 @@ export const CareTouch: React.FC<CareTouchProps> = ({ initialData, onSave, isSav
     setActiveZoneId(zoneId);
     const zone = TIME_ZONES.find(z => z.id === zoneId);
     if (zone) {
-      const currentHour = Math.floor(currentInputTime / 60);
-      if (currentHour < zone.start || currentHour >= zone.end) {
-        setCurrentInputTime(zone.start * 60);
-      }
+      const midHour = (zone.start + zone.end) / 2;
+      setCurrentInputTime(Math.floor(midHour * 60));
     }
   };
 
   const handleSliderChange = (_: Event, newValue: number | number[]) => {
-    setCurrentInputTime(newValue as number);
+    const val = newValue as number;
+    setCurrentInputTime(val);
+    updateActiveZone(val);
+  };
+
+  // 時刻ピッカー
+  const handleTimeChipClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    setAnchorEl(event.currentTarget);
+  };
+  const handleTimePopoverClose = () => {
+    setAnchorEl(null);
+  };
+  const handleWheelChange = (type: 'hour' | 'minute', val: number) => {
+    let h = Math.floor(currentInputTime / 60);
+    let m = currentInputTime % 60;
+    if (h >= 24) h = 23; 
+    if (type === 'hour') h = val;
+    if (type === 'minute') m = val;
+    const newMins = h * 60 + m;
+    setCurrentInputTime(newMins);
+    updateActiveZone(newMins);
   };
 
   const handleSave = () => {
@@ -137,190 +239,290 @@ export const CareTouch: React.FC<CareTouchProps> = ({ initialData, onSave, isSav
 
   const themeColor = CATEGORY_STYLES[selectedCategory.color] || CATEGORY_STYLES.gray;
   const activeZone = TIME_ZONES.find(z => z.id === activeZoneId);
-
   const timeLabel = `${Math.floor(currentInputTime / 60).toString().padStart(2, '0')}:${(currentInputTime % 60).toString().padStart(2, '0')}`;
 
+  const sliderMarks = MARK_VALUES.map(val => ({
+    value: val * 60,
+    label: (
+      <Box
+        onClick={(e) => {
+          e.stopPropagation();
+          const mins = val * 60;
+          setCurrentInputTime(mins);
+          updateActiveZone(mins);
+        }}
+        sx={{ 
+          cursor: 'pointer', p: 1, 
+          fontSize: '0.8rem', fontWeight: '500', color: 'text.secondary',
+          '&:hover': { color: 'primary.main', fontWeight: 'bold' }
+        }}
+      >
+        {val}
+      </Box>
+    )
+  }));
+
+  const hours = Array.from({ length: 24 }, (_, i) => i);
+  const minutes = Array.from({ length: 12 }, (_, i) => i * 5);
+
   return (
-    <Box sx={{ p: 2, bgcolor: '#f1f5f9', minHeight: '100%', borderRadius: 2 }}>
+    <Box sx={{ p: { xs: 1, md: 2 }, height: '100%', overflowY: 'auto' }}>
+      
+      <Paper elevation={3} sx={{ borderRadius: 4, overflow: 'hidden', border: '1px solid #e2e8f0' }}>
+        
+        {/* --- ヘッダー --- */}
+        <Box sx={{ bgcolor: '#f8fafc', p: 3, borderBottom: '1px solid #e2e8f0' }}>
+          <Grid container spacing={3} alignItems="center">
+            <Grid size={{ xs: 12, md: 7 }}>
+              <Stack direction="row" spacing={1} alignItems="center" mb={1}>
+                <TimeIcon color="action" fontSize="small" />
+                <Typography variant="subtitle2" color="text.secondary" fontWeight="bold">ケア実施時刻</Typography>
+                <Chip 
+                  label={timeLabel} 
+                  color="primary" 
+                  size="small" 
+                  onClick={handleTimeChipClick}
+                  sx={{ 
+                    fontWeight: 'bold', fontSize: '1rem', height: 28, cursor: 'pointer',
+                    '&:hover': { boxShadow: 2 }
+                  }} 
+                />
+              </Stack>
+              
+              <Stack direction="row" spacing={0.5} mb={2}>
+                {TIME_ZONES.map(zone => (
+                  <Button
+                    key={zone.id}
+                    variant={activeZoneId === zone.id ? "contained" : "text"}
+                    onClick={() => handleZoneClick(zone.id)}
+                    sx={{
+                      flex: 1, py: 0.5, borderRadius: 2, fontSize: '0.8rem', fontWeight: 'bold',
+                      bgcolor: activeZoneId === zone.id ? zone.color : 'transparent',
+                      color: activeZoneId === zone.id ? '#fff' : 'text.secondary',
+                      '&:hover': { bgcolor: activeZoneId === zone.id ? zone.color : '#f1f5f9' },
+                      transition: 'all 0.2s ease-in-out'
+                    }}
+                  >
+                    {zone.label}
+                  </Button>
+                ))}
+              </Stack>
 
-      {/* 0. 時刻入力 */}
-      <Box sx={{ mb: 3, bgcolor: 'white', p: 1.5, borderRadius: 2, border: '1px solid', borderColor: 'primary.light', boxShadow: 1 }}>
-        <Stack direction="row" alignItems="center" spacing={1} mb={1.5}>
-          <TimeIcon color="primary" fontSize="small" />
-          <Typography variant="subtitle2" fontWeight="bold" color="primary.main">
-            記録時刻: <Box component="span" sx={{ fontSize: '1.2rem' }}>{timeLabel}</Box>
-          </Typography>
-        </Stack>
+              <Box sx={{ px: 2 }}>
+                <Slider
+                  value={currentInputTime}
+                  onChange={handleSliderChange}
+                  min={0} max={1440} step={5}
+                  marks={sliderMarks}
+                  valueLabelDisplay="auto"
+                  valueLabelFormat={(val) => {
+                    const h = Math.floor(val / 60);
+                    const m = val % 60;
+                    return `${h}:${m.toString().padStart(2, '0')}`;
+                  }}
+                  sx={{ 
+                    color: activeZone?.color || 'primary.main', height: 8,
+                    '& .MuiSlider-thumb': { width: 20, height: 20, boxShadow: '0 2px 4px rgba(0,0,0,0.2)' },
+                    '& .MuiSlider-markLabel': { top: 30 }
+                  }}
+                />
+              </Box>
+            </Grid>
 
-        <Grid container spacing={1} mb={activeZoneId ? 2 : 0}>
-          {TIME_ZONES.map(zone => (
-            <Grid size={{ xs: 3 }} key={zone.id}>
+            <Grid size={{ xs: 12, md: 5 }}>
+              <Stack direction="row" spacing={1} alignItems="center" mb={1}>
+                <PlaceIcon color="action" fontSize="small" />
+                <Typography variant="subtitle2" color="text.secondary" fontWeight="bold">場所</Typography>
+              </Stack>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                {lifeSchema.places.map(place => (
+                  <Chip
+                    key={place}
+                    label={place}
+                    onClick={() => setSelectedPlace(place)}
+                    variant={selectedPlace === place ? "filled" : "outlined"}
+                    color={selectedPlace === place ? "default" : "default"}
+                    sx={{
+                      bgcolor: selectedPlace === place ? '#334155' : 'transparent',
+                      color: selectedPlace === place ? '#fff' : 'text.primary',
+                      fontWeight: selectedPlace === place ? 'bold' : 'normal',
+                      borderColor: '#cbd5e1'
+                    }}
+                  />
+                ))}
+              </Box>
+            </Grid>
+          </Grid>
+        </Box>
+
+        {/* --- 時刻ピッカー (Popover) --- */}
+        <Popover
+          open={Boolean(anchorEl)}
+          anchorEl={anchorEl}
+          onClose={handleTimePopoverClose}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'center' }}
+          PaperProps={{ sx: { borderRadius: 3, boxShadow: '0 8px 24px rgba(0,0,0,0.2)' } }}
+        >
+          {/* ヘッダー */}
+          <Box sx={{ p: 1.5, borderBottom: '1px solid #eee', bgcolor: '#f9f9f9' }}>
+            <Grid container>
+              <Grid size={{ xs: 6 }} sx={{ textAlign: 'center' }}>
+                <Typography variant="caption" color="text.secondary" fontWeight="bold">時</Typography>
+              </Grid>
+              <Grid size={{ xs: 6 }} sx={{ textAlign: 'center' }}>
+                <Typography variant="caption" color="text.secondary" fontWeight="bold">分</Typography>
+              </Grid>
+            </Grid>
+          </Box>
+
+          <Box sx={{ p: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+            {/* ハイライトバー */}
+            <Box 
+              sx={{ 
+                position: 'absolute', top: '50%', left: 16, right: 16, height: 40, 
+                bgcolor: 'rgba(0,0,0,0.04)', borderRadius: 2, transform: 'translateY(-50%)', 
+                pointerEvents: 'none', zIndex: 0 
+              }} 
+            />
+            
+            <WheelColumn options={hours} value={Math.floor(currentInputTime / 60)} onChange={(val) => handleWheelChange('hour', val)} />
+            <Typography variant="h5" sx={{ mx: 1, color: '#ccc', pb: 0.5 }}>:</Typography>
+            <WheelColumn options={minutes} value={currentInputTime % 60} onChange={(val) => handleWheelChange('minute', val)} />
+          </Box>
+
+          {/* 完了ボタン */}
+          <Box sx={{ p: 1, borderTop: '1px solid #eee' }}>
+            <Button fullWidth variant="contained" onClick={handleTimePopoverClose}>
+              完了
+            </Button>
+          </Box>
+        </Popover>
+
+        {/* --- メインコンテンツ --- */}
+        <Box sx={{ p: 3 }}>
+          <Box sx={{ mb: 3, overflowX: 'auto', pb: 1 }}>
+            <Stack direction="row" spacing={1}>
+              {lifeSchema.categories.map((cat: any) => {
+                const isSelected = selectedCategory.id === cat.id;
+                const colors = CATEGORY_STYLES[cat.color] || CATEGORY_STYLES.gray;
+                return (
+                  <Button
+                    key={cat.id}
+                    onClick={() => handleCategoryChange(cat)}
+                    startIcon={isSelected ? <CategoryIcon /> : null}
+                    sx={{
+                      borderRadius: 3, px: 3, py: 1, fontWeight: 'bold', whiteSpace: 'nowrap',
+                      color: isSelected ? '#fff' : colors.dark,
+                      bgcolor: isSelected ? colors.main : colors.light,
+                      border: `1px solid ${isSelected ? colors.main : 'transparent'}`,
+                      boxShadow: isSelected ? `0 4px 6px -1px ${colors.main}40` : 'none',
+                      transition: 'all 0.2s',
+                      '&:hover': { bgcolor: isSelected ? colors.dark : '#fff', transform: 'translateY(-1px)' }
+                    }}
+                  >
+                    {cat.label}
+                  </Button>
+                );
+              })}
+            </Stack>
+          </Box>
+
+          <Card variant="outlined" sx={{ mb: 3, borderColor: themeColor.main, bgcolor: themeColor.light, borderRadius: 3 }}>
+            <CardHeader 
+              title={`${selectedCategory.label}の内容`}
+              titleTypographyProps={{ variant: 'subtitle1', fontWeight: 'bold', color: themeColor.dark }}
+              sx={{ pb: 0 }}
+            />
+            <CardContent>
+              <Grid container spacing={2}>
+                {selectedCategory.items.map(item => {
+                  const isSelected = selectedTags.includes(item);
+                  return (
+                    <Grid size={{ xs: 6, sm: 4, md: 3 }} key={item}>
+                      <Button
+                        fullWidth
+                        onClick={() => handleTagToggle(item)}
+                        variant="contained"
+                        sx={{
+                          height: 56, fontWeight: 'bold', fontSize: '1rem',
+                          color: isSelected ? '#fff' : themeColor.dark,
+                          bgcolor: isSelected ? themeColor.main : '#fff',
+                          border: isSelected ? 'none' : `1px solid ${themeColor.main}40`,
+                          boxShadow: isSelected ? 3 : 0,
+                          '&:hover': { bgcolor: isSelected ? themeColor.dark : '#fff' }
+                        }}
+                      >
+                        {item}
+                      </Button>
+                    </Grid>
+                  );
+                })}
+              </Grid>
+            </CardContent>
+          </Card>
+
+          <Box sx={{ mb: 3 }}>
+            <Typography variant="subtitle2" color="text.secondary" fontWeight="bold" mb={1}>様子・特記事項タグ</Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+              {lifeSchema.conditions.map(cond => {
+                const isSelected = selectedConditions.includes(cond);
+                return (
+                  <Chip
+                    key={cond}
+                    label={cond}
+                    onClick={() => handleConditionToggle(cond)}
+                    sx={{
+                      fontWeight: isSelected ? 'bold' : 'normal',
+                      bgcolor: isSelected ? '#fce7f3' : '#fff',
+                      color: isSelected ? '#be185d' : '#64748b',
+                      border: `1px solid ${isSelected ? '#ec4899' : '#e2e8f0'}`,
+                      '&:hover': { bgcolor: '#fdf2f8' }
+                    }}
+                  />
+                );
+              })}
+            </Box>
+          </Box>
+
+          <Divider sx={{ my: 3 }} />
+
+          <Grid container spacing={2}>
+            <Grid size={{ xs: 12, md: 8 }}>
+              <TextField
+                fullWidth
+                placeholder="特記事項メモ (任意)..."
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                multiline
+                rows={2}
+                variant="outlined"
+                sx={{ bgcolor: '#fff' }}
+                slotProps={{ input: { startAdornment: <NoteIcon color="action" sx={{ mr: 1, mt: 0.5, alignSelf: 'flex-start' }} /> } }}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 4 }} sx={{ display: 'flex', alignItems: 'stretch' }}>
               <Button
                 fullWidth
-                variant={activeZoneId === zone.id ? "contained" : "outlined"}
-                size="small"
-                onClick={() => handleZoneClick(zone.id)}
+                variant="contained"
+                size="large"
+                onClick={handleSave}
+                disabled={!selectedPlace || selectedTags.length === 0 || isSaving}
+                startIcon={isSaving ? <CircularProgress size={20} color="inherit" /> : <SaveIcon />}
                 sx={{
-                  fontSize: '0.75rem', fontWeight: 'bold',
-                  bgcolor: activeZoneId === zone.id ? zone.color : 'white',
-                  borderColor: activeZoneId === zone.id ? zone.color : 'divider',
-                  color: activeZoneId === zone.id ? 'white' : 'text.secondary',
-                  boxShadow: activeZoneId === zone.id ? 2 : 0,
-                  '&:hover': { bgcolor: activeZoneId === zone.id ? zone.color : '#f8fafc' }
+                  fontWeight: 'bold', fontSize: '1.1rem', borderRadius: 3,
+                  bgcolor: '#0f172a',
+                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+                  '&:hover': { bgcolor: '#1e293b' }
                 }}
               >
-                {zone.label}
+                記録を確定
               </Button>
             </Grid>
-          ))}
-        </Grid>
+          </Grid>
 
-        {activeZone && (
-          <Box sx={{ px: 3, pt: 1, pb: 0, bgcolor: '#f8fafc', borderRadius: 2 }}>
-            <Slider
-              value={currentInputTime}
-              onChange={handleSliderChange}
-              min={activeZone.start * 60}
-              max={activeZone.end * 60 - 1}
-              step={5}
-              valueLabelDisplay="auto"
-              valueLabelFormat={(val) => {
-                const h = Math.floor(val / 60);
-                const m = val % 60;
-                return `${h}:${m.toString().padStart(2, '0')}`;
-              }}
-              sx={{ color: activeZone.color, height: 6 }}
-            />
-            <Typography variant="caption" color="text.secondary" align="center" display="block">
-              {activeZone.label} ({activeZone.start}:00 - {activeZone.end}:00)
-            </Typography>
-          </Box>
-        )}
-      </Box>
-
-      <Divider sx={{ mb: 3 }} />
-
-      {/* 1. 場所 */}
-      <Box sx={{ mb: 2 }}>
-        <Typography variant="caption" sx={{ fontWeight: 'bold', color: 'text.secondary', mb: 0.5, display: 'block' }}>場所</Typography>
-        <Stack direction="row" spacing={1} sx={{ overflowX: 'auto', pb: 1, '::-webkit-scrollbar': { display: 'none' } }}>
-          {lifeSchema.places.map(place => (
-            <Button
-              key={place} onClick={() => setSelectedPlace(place)}
-              variant={selectedPlace === place ? 'contained' : 'outlined'}
-              sx={{
-                borderRadius: '20px', minWidth: 'auto', px: 2, py: 0.5,
-                fontWeight: 'bold', whiteSpace: 'nowrap', boxShadow: selectedPlace === place ? 2 : 0,
-                bgcolor: selectedPlace === place ? 'text.primary' : 'white',
-                color: selectedPlace === place ? 'white' : 'text.primary',
-                borderColor: 'divider',
-                '&:hover': { bgcolor: selectedPlace === place ? 'text.primary' : '#f8fafc' }
-              }}
-            >
-              {place}
-            </Button>
-          ))}
-        </Stack>
-      </Box>
-
-      {/* 2. カテゴリ */}
-      <Box sx={{ mb: 2 }}>
-        <Typography variant="caption" sx={{ fontWeight: 'bold', color: 'text.secondary', mb: 0.5, display: 'block' }}>カテゴリ</Typography>
-        <Stack direction="row" spacing={1} sx={{ overflowX: 'auto', pb: 1, '::-webkit-scrollbar': { display: 'none' } }}>
-          {lifeSchema.categories.map((cat: any) => {
-            const isSelected = selectedCategory.id === cat.id;
-            const colors = CATEGORY_STYLES[cat.color] || CATEGORY_STYLES.gray;
-            return (
-              <Button
-                key={cat.id} onClick={() => handleCategoryChange(cat)}
-                sx={{
-                  borderRadius: 2, minWidth: 'auto', px: 2, py: 1,
-                  fontWeight: 'bold', fontSize: '0.9rem', whiteSpace: 'nowrap',
-                  color: isSelected ? 'white' : colors.dark,
-                  bgcolor: isSelected ? colors.main : 'white',
-                  border: `1px solid ${isSelected ? colors.main : 'transparent'}`,
-                  boxShadow: isSelected ? 4 : 1,
-                  '&:hover': { bgcolor: isSelected ? colors.dark : colors.light }
-                }}
-              >
-                {cat.label}
-              </Button>
-            );
-          })}
-        </Stack>
-      </Box>
-
-      {/* 3. 詳細 */}
-      <Paper elevation={0} sx={{ p: 2, borderRadius: 3, border: `2px solid ${themeColor.main}`, bgcolor: 'white', mb: 3 }}>
-        <Typography variant="subtitle1" sx={{ mb: 2, fontWeight: 'bold', color: themeColor.dark, borderBottom: `1px dashed ${themeColor.light}`, pb: 1 }}>
-          {selectedCategory.label} の内容
-        </Typography>
-        <Grid container spacing={1.5}>
-          {selectedCategory.items.map(item => {
-            const isSelected = selectedTags.includes(item);
-            return (
-              <Grid size={{ xs: 4, sm: 3 }} key={item}>
-                <Button
-                  fullWidth onClick={() => handleTagToggle(item)}
-                  sx={{
-                    height: '64px', fontSize: '0.95rem', fontWeight: 'bold', borderRadius: 2,
-                    color: isSelected ? themeColor.dark : 'text.primary',
-                    bgcolor: isSelected ? themeColor.light : '#f8fafc',
-                    border: '2px solid', borderColor: isSelected ? themeColor.main : 'divider',
-                    boxShadow: isSelected ? `0 0 0 2px ${themeColor.light}` : 'none',
-                    lineHeight: 1.2, '&:hover': { bgcolor: isSelected ? themeColor.light : '#f1f5f9' }
-                  }}
-                >
-                  {item}
-                </Button>
-              </Grid>
-            );
-          })}
-        </Grid>
-      </Paper>
-
-      {/* 4. 様子 */}
-      <Box sx={{ mb: 3 }}>
-        <Typography variant="caption" sx={{ fontWeight: 'bold', color: 'text.secondary', mb: 1, display: 'block' }}>様子・状態</Typography>
-        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-          {lifeSchema.conditions.map(cond => {
-            const isSelected = selectedConditions.includes(cond);
-            return (
-              <Chip
-                key={cond} label={cond} onClick={() => handleConditionToggle(cond)}
-                sx={{
-                  fontWeight: isSelected ? 'bold' : 'normal',
-                  bgcolor: isSelected ? '#fce7f3' : 'white',
-                  color: isSelected ? '#be185d' : 'text.secondary',
-                  border: '1px solid', borderColor: isSelected ? '#ec4899' : 'divider',
-                  '&:hover': { bgcolor: '#fdf2f8' }
-                }}
-              />
-            );
-          })}
         </Box>
-      </Box>
-
-      <Divider sx={{ mb: 3 }} />
-
-      {/* 5. 保存 */}
-      <Stack spacing={2}>
-        <TextField
-          fullWidth placeholder="特記事項メモ (任意)..." value={note}
-          onChange={(e) => setNote(e.target.value)} multiline rows={2} variant="outlined"
-          sx={{ bgcolor: 'white' }}
-        />
-        <Button
-          fullWidth variant="contained" size="large" onClick={handleSave}
-          disabled={!selectedPlace || selectedTags.length === 0 || isSaving}
-          sx={{
-            height: 56, fontWeight: 'bold', fontSize: '1.1rem',
-            borderRadius: 3, boxShadow: 4, bgcolor: 'text.primary', '&:hover': { bgcolor: 'black' }
-          }}
-        >
-          {isSaving ? <CircularProgress size={26} color="inherit" /> : "記録を確定 (Save)"}
-        </Button>
-      </Stack>
+      </Paper>
     </Box>
   );
 };

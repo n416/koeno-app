@@ -11,12 +11,14 @@
   --success-color: #10b981;
   --header-height: 50px;
 
-  /* カテゴリ別テーマカラー定義 */
+  /* カテゴリ別テーマカラー定義 (CareTouch.tsxと一致させる) */
   --color-orange: #f97316;
-  --color-blue: #3b82f6;
   --color-green: #10b981;
-  --color-purple: #a855f7;
+  --color-blue: #3b82f6;
+  --color-indigo: #6366f1; /* 追加 */
   --color-red: #ef4444;
+  --color-purple: #a855f7;
+  --color-teal: #14b8a6;   /* 追加 */
   --color-gray: #64748b;
   
   /* 時間帯カラー定義 */
@@ -34,10 +36,12 @@ body {
 
 /* --- テーマカラー適用クラス --- */
 .theme-orange { --theme-color: var(--color-orange); }
-.theme-blue   { --theme-color: var(--color-blue); }
 .theme-green  { --theme-color: var(--color-green); }
-.theme-purple { --theme-color: var(--color-purple); }
+.theme-blue   { --theme-color: var(--color-blue); }
+.theme-indigo { --theme-color: var(--color-indigo); } /* 追加 */
 .theme-red    { --theme-color: var(--color-red); }
+.theme-purple { --theme-color: var(--color-purple); }
+.theme-teal   { --theme-color: var(--color-teal); }   /* 追加 */
 .theme-gray   { --theme-color: var(--color-gray); }
 
 /* --- ゾーンカラー適用クラス --- */

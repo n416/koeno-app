@@ -96,7 +96,6 @@ class RecordingResponse(BaseModel):
 class AuthRequest(BaseModel):
     caregiver_id: str
 
-# ★ 追加: QR認証用リクエストモデル
 class QrAuthRequest(BaseModel):
     qr_token: str
 
@@ -107,7 +106,7 @@ class CaregiverInput(BaseModel):
 class CaregiverInfo(BaseModel):
     caregiver_id: str
     name: Optional[str]
-    created_at: Optional[datetime.datetime]
+    created_at: Optional[str] # ★ strに変更
     qr_token: Optional[str] = None
 
 class CareRecordInput(BaseModel):
@@ -125,14 +124,14 @@ class CareRecordDetail(BaseModel):
     final_text: str
     care_touch_data: Optional[Dict[str, Any]] = None
     last_updated_by: Optional[str] = None 
-    updated_at: Optional[datetime.datetime] = None 
+    updated_at: Optional[str] = None # ★ strに変更
 
 class UnassignedRecording(BaseModel):
     recording_id: int
     caregiver_id: str
     memo_text: Optional[str]
     ai_status: str
-    created_at: datetime.datetime
+    created_at: str # ★ strに変更
 
 class TranscriptionResponse(BaseModel):
     recording_id: int
@@ -150,7 +149,7 @@ class AssignedRecording(BaseModel):
     recording_id: int
     caregiver_id: str
     memo_text: Optional[str]
-    created_at: datetime.datetime
+    created_at: str # ★ strに変更
     assignment_snapshot: Optional[Any] = None
     summary_drafts: Optional[Dict[str, str]] = None
 
@@ -160,15 +159,30 @@ class CareEventInput(BaseModel):
     event_type: str = "care_touch"
     care_touch_data: Optional[Dict[str, Any]] = None
     note_text: Optional[str] = None
+    event_id: Optional[int] = None
 
 class CareEventOutput(BaseModel):
     event_id: int
     user_id: str
-    event_timestamp: datetime.datetime
+    event_timestamp: str # ★ strに変更 (強制的にZ付きISO形式で返す)
     event_type: str
     care_touch_data: Optional[Dict[str, Any]] = None
     note_text: Optional[str] = None
     recorded_by: Optional[str] = None
+
+# --- ユーティリティ: タイムゾーン付与 & 文字列化 ---
+def ensure_utc_iso(dt: Any) -> Optional[str]:
+    """SQLiteから取得したNaiveなdatetimeを、必ず 'Z' 付きのUTC ISO文字列に変換する"""
+    if dt is None:
+        return None
+    if isinstance(dt, str):
+        # すでに文字列ならそのまま（ただしZがない場合は注意だが、今回はDBからの戻り値を想定）
+        return dt
+    # datetimeオブジェクトの場合
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    # isoformat() は +00:00 を返すが、ブラウザ互換性のため Z に置換するのが無難
+    return dt.isoformat().replace("+00:00", "Z")
 
 # --- ライフサイクル管理 ---
 @asynccontextmanager
@@ -242,16 +256,13 @@ async def authenticate(req: AuthRequest = Body(...)):
     if res: return {"status": "authenticated", "caregiver_id": req.caregiver_id}
     raise HTTPException(401, "ID not found")
 
-# ★ 追加: 認証 (QRトークン)
+# 認証 (QRトークン)
 @app.post("/authenticate_qr")
 async def authenticate_qr(req: QrAuthRequest = Body(...)):
-    # qr_token で検索
     res = await database.fetch_one(caregivers.select().where(caregivers.c.qr_token == req.qr_token))
     if res:
-        # ヒットしたらそのIDを返す
         return {"status": "authenticated", "caregiver_id": res.caregiver_id}
     else:
-        # ヒットしなければエラー
         raise HTTPException(401, "Invalid QR Token")
 
 # 3. 日報関連
@@ -266,7 +277,11 @@ async def get_detail(user_id: str = Query(...), record_date: str = Query(...)):
     res = await database.fetch_one(q)
     if not res: 
         return CareRecordDetail(user_id=user_id, record_date=record_date, final_text="", care_touch_data=None)
-    return res
+    # ★ 日時変換
+    data = dict(res)
+    if data.get("updated_at"):
+        data["updated_at"] = ensure_utc_iso(data["updated_at"])
+    return data
 
 @app.post("/save_care_record", status_code=201)
 async def save_record(inp: CareRecordInput = Body(...), caller: str = Header(..., alias="X-Caller-ID")):
@@ -286,14 +301,24 @@ async def get_unassigned(caregiver_id: str = Query(...), record_date: str = Quer
     jst_date = sqlalchemy.func.date(sqlalchemy.func.datetime(recordings.c.created_at, '+9 hours'))
     q = recordings.select().where((recordings.c.caregiver_id == caregiver_id) & (jst_date == record_date))
     if assigned_ids: q = q.where(sqlalchemy.not_(recordings.c.recording_id.in_(assigned_ids)))
-    return await database.fetch_all(q.order_by(recordings.c.created_at.desc()))
+    
+    rows = await database.fetch_all(q.order_by(recordings.c.created_at.desc()))
+    # ★ 修正: 強制的にISO文字列化
+    return [
+        {**dict(r), "created_at": ensure_utc_iso(r["created_at"])} for r in rows
+    ]
 
 @app.get("/assigned_recordings", response_model=List[AssignedRecording])
 async def get_assigned(user_id: str = Query(...), record_date: str = Query(...)):
     jst_date = sqlalchemy.func.date(sqlalchemy.func.datetime(recordings.c.created_at, '+9 hours'))
     j = sqlalchemy.join(recording_assignments, recordings, recording_assignments.c.recording_id == recordings.c.recording_id)
     q = sqlalchemy.select(recordings.c.recording_id, recordings.c.caregiver_id, recordings.c.memo_text, recordings.c.created_at, recordings.c.assignment_snapshot, recordings.c.summary_drafts).select_from(j).where((recording_assignments.c.user_id == user_id) & (jst_date == record_date)).order_by(recordings.c.created_at.asc())
-    return await database.fetch_all(q)
+    
+    rows = await database.fetch_all(q)
+    # ★ 修正: 強制的にISO文字列化
+    return [
+        {**dict(r), "created_at": ensure_utc_iso(r["created_at"])} for r in rows
+    ]
 
 @app.get("/recording_transcription/{recording_id}", response_model=TranscriptionResponse)
 async def get_transcription(recording_id: int, caller: str = Header(..., alias="X-Caller-ID")):
@@ -318,15 +343,59 @@ async def save_event(inp: CareEventInput = Body(...), caller: str = Header(..., 
         ts = datetime.datetime.fromisoformat(inp.event_timestamp).astimezone(timezone.utc)
     except:
         ts = datetime.datetime.now(timezone.utc)
-    query = care_events.insert().values(user_id=inp.user_id, event_timestamp=ts, event_type=inp.event_type, care_touch_data=inp.care_touch_data, note_text=inp.note_text, recorded_by=caller, created_at=datetime.datetime.now(timezone.utc))
+
+    if inp.event_id is not None:
+        query_check = care_events.select().where(care_events.c.event_id == inp.event_id)
+        existing = await database.fetch_one(query_check)
+        if existing:
+            query_update = (
+                care_events.update()
+                .where(care_events.c.event_id == inp.event_id)
+                .values(
+                    user_id=inp.user_id,
+                    event_timestamp=ts,
+                    event_type=inp.event_type,
+                    care_touch_data=inp.care_touch_data,
+                    note_text=inp.note_text,
+                    recorded_by=caller
+                )
+            )
+            await database.execute(query_update)
+            return {"status": "updated", "event_id": inp.event_id}
+
+    query = care_events.insert().values(
+        user_id=inp.user_id, 
+        event_timestamp=ts, 
+        event_type=inp.event_type, 
+        care_touch_data=inp.care_touch_data, 
+        note_text=inp.note_text, 
+        recorded_by=caller, 
+        created_at=datetime.datetime.now(timezone.utc)
+    )
+    last_id = await database.execute(query)
+    return {"status": "created", "event_id": last_id}
+
+@app.delete("/care_events/{event_id}", status_code=204)
+async def delete_event(event_id: int, caller: str = Header(..., alias="X-Caller-ID")):
+    query = care_events.delete().where(care_events.c.event_id == event_id)
     await database.execute(query)
-    return {"status": "created"}
+    return
 
 @app.get("/daily_events", response_model=List[CareEventOutput])
 async def get_daily_events(user_id: str = Query(...), date: str = Query(...)):
     jst_date = sqlalchemy.func.date(sqlalchemy.func.datetime(care_events.c.event_timestamp, '+9 hours'))
     q = care_events.select().where((care_events.c.user_id == user_id) & (jst_date == date)).order_by(care_events.c.event_timestamp.desc())
-    return await database.fetch_all(q)
+    
+    rows = await database.fetch_all(q)
+    
+    # ★ 修正: 強制的にISO文字列化（"Z"付き）
+    return [
+        {
+            **dict(r), 
+            "event_timestamp": ensure_utc_iso(r["event_timestamp"])
+        } 
+        for r in rows
+    ]
 
 # 6. 管理者機能
 async def verify_admin(caller: str = Header(None, alias="X-Caller-ID")):
@@ -336,14 +405,20 @@ async def verify_admin(caller: str = Header(None, alias="X-Caller-ID")):
 
 @app.get("/admin/caregivers", response_model=List[CaregiverInfo])
 async def ad_list(a: str = Depends(verify_admin)):
-    return await database.fetch_all(caregivers.select().order_by(caregivers.c.created_at.desc()))
+    rows = await database.fetch_all(caregivers.select().order_by(caregivers.c.created_at.desc()))
+    # ★ 修正: 強制的にISO文字列化
+    return [
+        {**dict(r), "created_at": ensure_utc_iso(r["created_at"])} for r in rows
+    ]
 
 @app.post("/admin/caregivers", response_model=CaregiverInfo)
 async def ad_add(i: CaregiverInput = Body(...), a: str = Depends(verify_admin)):
     try:
         new_token = str(uuid.uuid4())
         await database.execute(caregivers.insert().values(caregiver_id=i.caregiver_id, name=i.name, created_at=datetime.datetime.now(datetime.UTC), qr_token=new_token))
-        return await database.fetch_one(caregivers.select().where(caregivers.c.caregiver_id == i.caregiver_id))
+        res = await database.fetch_one(caregivers.select().where(caregivers.c.caregiver_id == i.caregiver_id))
+        # ★ 修正
+        return {**dict(res), "created_at": ensure_utc_iso(res["created_at"])}
     except: raise HTTPException(409, "Exists")
 
 @app.delete("/admin/caregivers/{cid}", status_code=204)
@@ -356,7 +431,9 @@ async def ad_reset_qr(cid: str, a: str = Depends(verify_admin)):
     if not user: raise HTTPException(404, "User not found")
     new_token = str(uuid.uuid4())
     await database.execute(caregivers.update().where(caregivers.c.caregiver_id == cid).values(qr_token=new_token))
-    return await database.fetch_one(caregivers.select().where(caregivers.c.caregiver_id == cid))
+    res = await database.fetch_one(caregivers.select().where(caregivers.c.caregiver_id == cid))
+    # ★ 修正
+    return {**dict(res), "created_at": ensure_utc_iso(res["created_at"])}
 
 # --- フロントエンド配信 ---
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "../web-v2/dist")

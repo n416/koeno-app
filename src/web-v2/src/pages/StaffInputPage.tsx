@@ -12,40 +12,27 @@ import { extractJson } from '../utils/jsonExtractor';
 
 import { USERS_MASTER, type User } from '../data/usersMaster';
 import { RecordingAdjustModal } from '../components/RecordingAdjustModal';
-// 再利用モーダル
 import { ProcessedSelectionModal, type ProcessedCandidate } from '../components/ProcessedSelectionModal';
-// ★追加: 録音モーダル
 import { AudioRecorderModal } from '../components/AudioRecorderModal';
 
 import { 
   ContentCopy as CopyIcon, 
-  Edit as EditIcon, 
   DeleteOutline as DeleteIcon, 
   Close as CloseIcon,
-  Mic as MicIcon // ★追加
+  Mic as MicIcon,
+  KeyboardArrowDown as ArrowDownIcon
 } from '@mui/icons-material';
 
-// MUIコンポーネント
-import { Tabs, Tab, Box, Typography } from '@mui/material';
+// MUI
+import { Tabs, Tab, Box, Typography, Menu, MenuItem, Button } from '@mui/material';
 
 const API_PATH = import.meta.env.VITE_API_BASE_URL || '';
 const DOCK_STYLE: React.CSSProperties = { position: 'absolute', inset: 0 };
 
-const TIME_ZONES_DEF = [
-  { label: '深夜', start: 0, end: 3, className: 'zone-midnight' },
-  { label: '午前', start: 3, end: 12, className: 'zone-morning' },
-  { label: '午後', start: 12, end: 18, className: 'zone-afternoon' },
-  { label: '夜',   start: 18, end: 24, className: 'zone-night' },
-];
-
 const getCategoryThemeClass = (category: string | undefined): string => {
   if (!category) return 'theme-gray';
-  if (category === '食事') return 'theme-orange';
-  if (category === '排泄') return 'theme-green';
-  if (category === '入浴') return 'theme-blue';
-  if (category === '移動' || category === '服薬') return 'theme-purple';
-  if (category === '医療') return 'theme-red';
-  return 'theme-gray';
+  const catDef = lifeSchema.categories.find(c => c.label === category);
+  return catDef ? `theme-${catDef.color}` : 'theme-gray';
 };
 
 const formatLocalDate = (date: Date) => {
@@ -55,7 +42,52 @@ const formatLocalDate = (date: Date) => {
   return `${y}-${m}-${d}`;
 };
 
-// 処理キューのアイテム型
+// アナログ時計コンポーネント (ユーザー指定サイズ版: 62px)
+const SimpleAnalogClock = ({ date }: { date: Date }) => {
+  const hours = date.getHours();
+  const minutes = date.getMinutes();
+  const isAm = hours < 12;
+  
+  const hourDeg = ((hours % 12) + minutes / 60) * 30;
+  const minuteDeg = minutes * 6;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', width: '70px' }}>
+      <div style={{ 
+        position: 'relative', 
+        width: '62px', height: '62px', 
+        borderRadius: '50%', 
+        border: '2px solid #cbd5e1', 
+        backgroundColor: '#fff',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.05)' 
+      }}>
+        {/* 短針 */}
+        <div style={{ 
+          position: 'absolute', top: '50%', left: '50%', 
+          width: '3px', height: '18px', 
+          backgroundColor: '#475569', transformOrigin: 'bottom center',
+          transform: `translate(-50%, -100%) rotate(${hourDeg}deg)`, borderRadius: '3px'
+        }} />
+        {/* 長針 */}
+        <div style={{ 
+          position: 'absolute', top: '50%', left: '50%', 
+          width: '2px', height: '25px', 
+          backgroundColor: '#94a3b8', transformOrigin: 'bottom center',
+          transform: `translate(-50%, -100%) rotate(${minuteDeg}deg)`, borderRadius: '2px'
+        }} />
+        {/* 中心点 */}
+        <div style={{ 
+          position: 'absolute', top: '50%', left: '50%', width: '6px', height: '6px', 
+          backgroundColor: '#475569', borderRadius: '50%', transform: 'translate(-50%, -50%)' 
+        }} />
+      </div>
+      <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'bold', marginTop: '4px', fontFamily: 'Arial, sans-serif' }}>
+        {isAm ? 'AM' : 'PM'}
+      </span>
+    </div>
+  );
+};
+
 interface ProcessingQueueItem {
   recordingId: number;
   groupId: string;
@@ -64,8 +96,11 @@ interface ProcessingQueueItem {
 }
 
 interface PageContextType {
-  selectedUserId: string;
+  selectedUserId: string; // 画面（リスト）の表示対象
   setSelectedUserId: (id: string) => void;
+  formUserId: string;     // フォーム（入力・編集）の対象
+  setFormUserId: (id: string) => void;
+
   dailyEvents: any[];
   careTouchData: Partial<CareTouchRecord>;
   setCareTouchData: (data: Partial<CareTouchRecord>) => void;
@@ -86,13 +121,14 @@ interface PageContextType {
 }
 const PageContext = React.createContext<PageContextType | null>(null);
 
-// --- コンポーネント (変更なし) ---
+// --- パネルコンポーネント ---
+
 const DateNavigatorPanel = () => {
   const { targetDate, changeDate } = useContext(PageContext)!;
   return (
     <div className="panel-root panel-centered">
       <div className="date-nav-container">
-         <button className="nav-arrow-btn" onClick={() => changeDate(-1)} aria-label="前日">◀</button>
+         <button className="nav-arrow-btn" onClick={() => changeDate(-1)}>◀</button>
          <div className="date-display">
             <span className="date-main">
               {targetDate.toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' })}
@@ -101,11 +137,12 @@ const DateNavigatorPanel = () => {
               ({targetDate.toLocaleDateString('ja-JP', { weekday: 'short' })})
             </span>
          </div>
-         <button className="nav-arrow-btn" onClick={() => changeDate(1)} aria-label="翌日">▶</button>
+         <button className="nav-arrow-btn" onClick={() => changeDate(1)}>▶</button>
       </div>
     </div>
   );
 };
+
 const UserListPanel = () => {
   const { selectedUserId, setSelectedUserId, dummyUsers } = useContext(PageContext)!;
   const navigate = useNavigate();
@@ -135,10 +172,13 @@ const UserListPanel = () => {
     </div>
   );
 };
+
 const HistoryListPanel = () => {
   const { dailyEvents, loading, handleCopy, handleEdit, handleDelete, editingId } = useContext(PageContext)!;
+  
   if (loading) return <div className="loading-text">Loading...</div>;
   if (!dailyEvents || dailyEvents.length === 0) return <div className="empty-text">No Records</div>;
+
   return (
     <div className="panel-root">
       <div className="panel-content">
@@ -146,18 +186,17 @@ const HistoryListPanel = () => {
             const data = event.care_touch_data || {};
             const eventTime = new Date(event.event_timestamp);
             const timeStr = eventTime.toLocaleTimeString('ja-JP', {hour:'2-digit', minute:'2-digit'});
-            const hour = eventTime.getHours();
-            const mins = hour * 60 + eventTime.getMinutes();
-            const zone = TIME_ZONES_DEF.find(z => hour >= z.start && hour < z.end);
-            const startMins = zone ? zone.start * 60 : 0;
-            const endMins = zone ? zone.end * 60 : 1440;
-            const percent = zone ? ((mins - startMins) / (endMins - startMins)) * 100 : 0;
-            const safePercent = Math.min(100, Math.max(0, percent));
+            
             const themeClass = getCategoryThemeClass(data.category);
-            const zoneClass = zone ? zone.className : 'zone-midnight';
             const isEditing = editingId === event.event_id;
+            
             return (
-              <div key={event.event_id} className={`history-card ${isEditing ? 'editing' : ''} ${themeClass}`}>
+              <div 
+                key={event.event_id} 
+                className={`history-card ${isEditing ? 'editing' : ''} ${themeClass}`}
+                onClick={() => handleEdit(event)} 
+                style={{ cursor: 'pointer', position: 'relative' }}
+              >
                 <div className="history-left">
                   <div className="history-header">
                       <div className="history-meta-row">
@@ -168,9 +207,6 @@ const HistoryListPanel = () => {
                       <div className="action-btn-group">
                         <button className="action-icon-btn btn-copy" onClick={(e) => { e.stopPropagation(); handleCopy(event); }} title="コピー">
                           <CopyIcon sx={{fontSize:14}} />
-                        </button>
-                        <button className="action-icon-btn btn-edit" onClick={(e) => { e.stopPropagation(); handleEdit(event); }} title="編集">
-                          <EditIcon sx={{fontSize:14}} />
                         </button>
                         <button className="action-icon-btn btn-delete" onClick={(e) => { e.stopPropagation(); handleDelete(event); }} title="削除">
                           <DeleteIcon sx={{fontSize:14}} />
@@ -184,9 +220,9 @@ const HistoryListPanel = () => {
                   </div>
                   {event.note_text && <div className="history-note">{event.note_text}</div>}
                 </div>
-                <div className="history-right">
-                   <div className={`zone-bg ${zoneClass}`}></div>
-                   <div className="time-dot" ref={(el) => { if (el) el.style.setProperty('--dot-pos', `${safePercent}%`); }}></div>
+                
+                <div style={{ borderLeft: '1px solid #f1f5f9', paddingLeft: '8px', display: 'flex', alignItems: 'center' }}>
+                   <SimpleAnalogClock date={eventTime} />
                 </div>
               </div>
             );
@@ -195,9 +231,25 @@ const HistoryListPanel = () => {
     </div>
   );
 };
+
 const InputFormPanel = () => {
-  const { careTouchData, handleSave, saving, selectedUserId, dummyUsers, editingId, cancelEdit, targetDate, careTouchInitialTime } = useContext(PageContext)!;
-  const userName = dummyUsers.find(u => u.id === selectedUserId)?.name || '';
+  const { 
+    careTouchData, handleSave, saving, formUserId, setFormUserId, 
+    dummyUsers, editingId, cancelEdit, targetDate, careTouchInitialTime 
+  } = useContext(PageContext)!;
+  
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const open = Boolean(anchorEl);
+  const currentUser = dummyUsers.find(u => u.id === formUserId) || dummyUsers[0];
+
+  const handleUserClick = (event: React.MouseEvent<HTMLButtonElement>) => setAnchorEl(event.currentTarget);
+  const handleUserClose = () => setAnchorEl(null);
+  
+  const handleUserSelect = (id: string) => {
+    setFormUserId(id);
+    handleUserClose();
+  };
+
   return (
     <div className="panel-root">
       <div className={`input-header ${editingId ? 'editing' : ''}`}>
@@ -206,13 +258,40 @@ const InputFormPanel = () => {
                 {editingId ? '記録を編集中' : '新規記録入力'}
             </span>
             {editingId && (
-                <button onClick={cancelEdit} className="btn-clean cancel-btn" aria-label="編集を中止">
+                <button onClick={cancelEdit} className="btn-clean cancel-btn">
                     <CloseIcon className="cancel-icon" /> 中止
                 </button>
             )}
         </div>
-        <span className="user-badge">{userName} 様</span>
+        
+        <div>
+          <Button 
+            onClick={handleUserClick}
+            endIcon={<ArrowDownIcon />}
+            sx={{ 
+              textTransform: 'none', fontSize: '1.2rem', fontWeight: 'bold', 
+              color: '#1e293b', py: 0.5, px: 2, bgcolor: '#f8fafc', 
+              borderRadius: 2, '&:hover': { bgcolor: '#e2e8f0' }
+            }}
+          >
+            {currentUser.name} 様
+          </Button>
+          <Menu anchorEl={anchorEl} open={open} onClose={handleUserClose}>
+            {dummyUsers.map((u) => (
+              <MenuItem 
+                key={u.id} onClick={() => handleUserSelect(u.id)} selected={u.id === formUserId}
+                sx={{ minWidth: 200, py: 1.5 }}
+              >
+                <div style={{display:'flex', alignItems:'center', gap:8}}>
+                   <div style={{width:8, height:8, borderRadius:'50%', background: u.color}}></div>
+                   <Typography fontWeight="bold">{u.name} 様</Typography>
+                </div>
+              </MenuItem>
+            ))}
+          </Menu>
+        </div>
       </div>
+      
       <div className="panel-content input-content-area">
         <CareTouch 
           initialData={careTouchData} 
@@ -232,11 +311,14 @@ const STORAGE_KEY = 'carelog_layout_final_v8';
 export const StaffInputPage = () => {
   const auth = useAuth();
   const [selectedUserId, setSelectedUserId] = useState<string>(USERS_MASTER[0].id);
+  const [formUserId, setFormUserId] = useState<string>(USERS_MASTER[0].id);
+
   const [targetDate, setTargetDate] = useState<Date>(new Date());
   
   const [dailyEventsRaw, setDailyEventsRaw] = useState<any[]>([]);
   const [assignedList, setAssignedList] = useState<any[]>([]);
   const [unassignedList, setUnassignedList] = useState<any[]>([]);
+  
   const [careTouchData, setCareTouchData] = useState<Partial<CareTouchRecord>>({});
   const [careTouchInitialTime, setCareTouchInitialTime] = useState<Date | undefined>(undefined);
 
@@ -251,11 +333,8 @@ export const StaffInputPage = () => {
   const [isAdjustHistoryMode, setIsAdjustHistoryMode] = useState(false);
   const [listModalTab, setListModalTab] = useState(0);
 
-  // 再利用モーダル用のState
   const [isReuseModalOpen, setIsReuseModalOpen] = useState(false);
   const [reuseCandidates, setReuseCandidates] = useState<ProcessedCandidate[]>([]);
-
-  // ★追加: 録音モーダル用のState
   const [isRecorderOpen, setIsRecorderOpen] = useState(false);
 
   const [processQueue, setProcessQueue] = useState<ProcessingQueueItem[]>([]);
@@ -273,14 +352,18 @@ export const StaffInputPage = () => {
   }, [dailyEventsRaw]);
 
   const displayRecordingList = useMemo(() => {
-    if (listModalTab === 0) {
-      return unassignedList; 
-    } else {
-      const combined = [...assignedList, ...unassignedList];
-      combined.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-      return combined;
-    }
+    if (listModalTab === 0) return unassignedList; 
+    const combined = [...assignedList, ...unassignedList];
+    combined.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    return combined;
   }, [listModalTab, unassignedList, assignedList]);
+
+  useEffect(() => {
+    setFormUserId(selectedUserId);
+    setEditingId(null);
+    setCareTouchData({});
+    setCareTouchInitialTime(undefined);
+  }, [selectedUserId]);
 
   const changeDate = (offset: number) => {
     const d = new Date(targetDate);
@@ -295,27 +378,44 @@ export const StaffInputPage = () => {
     setEditingId(null);
     if (event.care_touch_data) {
         setCareTouchData({ ...event.care_touch_data });
+        // ★ ここはコピーなので、元のtimestampを使ってもよいし、現在時刻にしてもよい。
+        // 運用上「同じ時間」にコピーすることは稀なので、現在時刻の方が親切かもしれないが、
+        // とりあえずコピー元と同じにしておく。
         setCareTouchInitialTime(new Date(event.care_touch_data.timestamp));
     }
   };
+
+  // ★ 修正: 編集時は「イベント自体の正しいタイムスタンプ」を初期値にする
   const handleEdit = (event: any) => {
     setEditingId(event.event_id);
+    setFormUserId(event.user_id); 
     if (event.care_touch_data) {
         setCareTouchData({ ...event.care_touch_data });
-        setCareTouchInitialTime(new Date(event.care_touch_data.timestamp));
+        // ★ 修正箇所: JSON内のtimestampではなく、管理用timestampを使用する
+        setCareTouchInitialTime(new Date(event.event_timestamp));
     }
   };
+
   const cancelEdit = () => {
     setEditingId(null);
+    setFormUserId(selectedUserId); 
     setCareTouchData({});
     setCareTouchInitialTime(undefined);
   };
+
   const handleDelete = async (event: any) => {
     if (!confirm('削除しますか？')) return;
     try {
+        console.log("Deleting event:", event.event_id);
+        const res = await fetch(`${API_PATH}/care_events/${event.event_id}`, {
+            method: 'DELETE',
+            headers: { 'X-Caller-ID': auth.caregiverId! }
+        });
+        if (!res.ok) throw new Error("Delete failed");
+        
         setDailyEventsRaw(prev => prev.filter(e => e.event_id !== event.event_id));
         if (editingId === event.event_id) cancelEdit();
-    } catch(e) { alert("削除失敗"); }
+    } catch(e) { alert("削除失敗: " + e); }
   };
 
   const openRecordingList = () => {
@@ -366,11 +466,8 @@ export const StaffInputPage = () => {
     finally { if (currentRequestId === requestIdRef.current) setLoading(false); }
   };
 
-  useEffect(() => { 
-      loadUserData(); 
-      setEditingId(null); 
-      setCareTouchData({}); 
-      setCareTouchInitialTime(undefined);
+  useEffect(() => {
+    loadUserData();
   }, [selectedUserId, dateStr, auth.caregiverId]);
 
   useEffect(() => {
@@ -428,7 +525,6 @@ export const StaffInputPage = () => {
   const handleGenerateFromVoice = async () => {
     const apiKey = localStorage.getItem('geminiApiKey');
     const isNoApiMode = localStorage.getItem('noApiMode') === 'true';
-
     if (!apiKey && !isNoApiMode) { alert("APIキー未設定"); return; }
 
     const collectCandidates = (onlyUnprocessed: boolean): ProcessedCandidate[] => {
@@ -474,35 +570,27 @@ export const StaffInputPage = () => {
     };
 
     const unprocessedItems = collectCandidates(true);
-
     if (unprocessedItems.length > 0) {
-        if (unprocessedItems.length > 1) {
-            alert(`${unprocessedItems.length}件の未処理データを検出しました。\n順番に入力・登録を行います。`);
-        }
         setProcessQueue(unprocessedItems); 
         return;
     }
-
     const processedItems = collectCandidates(false);
-
     if (processedItems.length > 0) {
         setReuseCandidates(processedItems);
         setIsReuseModalOpen(true);
     } else {
-        alert("この利用者に関連付けられた会話データがありません。\n未紐づけ録音から割り当てを行ってください。");
+        alert("データがありません。");
     }
   };
 
-  const handleReuseSelected = (selectedItems: ProcessedCandidate[]) => {
-      setProcessQueue(selectedItems);
-  };
+  const handleReuseSelected = (selectedItems: ProcessedCandidate[]) => setProcessQueue(selectedItems);
 
   const handleSave = async (data: CareTouchRecord) => {
     if (!auth.caregiverId) return;
     setSaving(true);
     try {
       const payload = {
-          user_id: selectedUserId,
+          user_id: formUserId, 
           event_timestamp: data.timestamp || new Date().toISOString(),
           event_type: 'care_touch',
           care_touch_data: data,
@@ -522,24 +610,13 @@ export const StaffInputPage = () => {
         setCurrentProcessItem(null);
         setCareTouchData({});
         setCareTouchInitialTime(undefined);
-        
-        if (processQueue.length <= 1) {
-           alert("すべての連続入力が完了しました！");
-        }
       } else {
-        if (editingId) {
-            setDailyEventsRaw(prev => prev.map(ev => ev.event_id === editingId ? { ...ev, care_touch_data: data, note_text: data.note, event_timestamp: payload.event_timestamp } : ev));
-            setEditingId(null);
-        } else {
-            const newEvent = { event_id: Date.now(), user_id: selectedUserId, event_timestamp: payload.event_timestamp, care_touch_data: data, note_text: data.note, recorded_by: auth.caregiverId };
-            setDailyEventsRaw(prev => [...prev, newEvent]);
-        }
+        setEditingId(null);
+        setFormUserId(selectedUserId); 
         setCareTouchData({});
         setCareTouchInitialTime(undefined);
       }
-      
       loadUserData();
-
     } catch(e) { alert("保存エラー: " + e); }
     setSaving(false);
   };
@@ -547,16 +624,11 @@ export const StaffInputPage = () => {
   const markAssignmentAsProcessed = async (recordingId: number, groupId: string) => {
     const targetRec = assignedList.find(r => r.recording_id === recordingId);
     if (!targetRec || !targetRec.assignment_snapshot) return;
-
     const newSnapshot = targetRec.assignment_snapshot.map((row: any) => {
-      if (row.type === 'assignment' && row.id === groupId) {
-        return { ...row, processed: true };
-      }
+      if (row.type === 'assignment' && row.id === groupId) return { ...row, processed: true };
       return row;
     });
-
     const userIds = Array.from(new Set(newSnapshot.filter((r:any) => r.type==='assignment').map((r:any) => r.userId)));
-    
     await fetch(`${API_PATH}/save_assignments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Caller-ID': auth.caregiverId! },
@@ -624,6 +696,7 @@ export const StaffInputPage = () => {
   return (
     <PageContext.Provider value={{
       selectedUserId, setSelectedUserId, 
+      formUserId, setFormUserId,
       dailyEvents: sortedDailyEvents,
       careTouchData, setCareTouchData,
       careTouchInitialTime, 
@@ -633,14 +706,11 @@ export const StaffInputPage = () => {
     }}>
       <div className="app-container">
         <header className="app-header">
-          <div className="app-title">CareLog Pro <span className="app-version">v4.3</span></div>
+          <div className="app-title">CareLog Pro <span className="app-version">v4.6</span></div>
           <div className="header-actions">
-            
-            {/* ★ 追加: 新規録音ボタン */}
             <button className="btn-clean" onClick={() => setIsRecorderOpen(true)} style={{ color: '#d32f2f', borderColor: '#d32f2f' }}>
               <MicIcon sx={{ fontSize: 16, mr: 0.5 }} /> 新規録音
             </button>
-
             <button className="btn-clean btn-unassigned" onClick={openRecordingList}>
               録音リスト ({unassignedList.length + assignedList.length})
             </button>
@@ -713,16 +783,11 @@ export const StaffInputPage = () => {
           onSelect={handleReuseSelected}
         />
 
-        {/* ★追加: 録音モーダル */}
         <AudioRecorderModal
           open={isRecorderOpen}
           onClose={() => setIsRecorderOpen(false)}
-          onUploadSuccess={() => {
-            loadUserData(); // リスト更新
-            // 必要ならここで「未紐づけリスト」を自動で開くことも可能
-          }}
+          onUploadSuccess={() => { loadUserData(); }}
         />
-
       </div>
     </PageContext.Provider>
   );
