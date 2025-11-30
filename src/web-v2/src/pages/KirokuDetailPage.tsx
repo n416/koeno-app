@@ -14,6 +14,11 @@ import { AutoAwesome as AiIcon, TouchApp as TouchIcon, EditNote as TextIcon } fr
 import { CareTouch, type CareTouchRecord } from '../components/CareTouch';
 import { extractJson } from '../utils/jsonExtractor';
 
+// ★★★ Task: 共通ユーザーマスタの使用 ★★★
+import { getUserById } from '../data/usersMaster';
+
+// ローカル定義の DUMMY_USERS を削除
+
 interface CareRecordDetail { final_text: string; }
 interface RecordingBase {
     recording_id: number;
@@ -44,8 +49,8 @@ export const KirokuDetailPage = () => {
   const [aiMessage, setAiMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
   
-  const DUMMY_USERS: { [key: string]: string } = { 'u1': '佐藤 様', 'u2': '鈴木 様', 'u3': '高橋 様', 'u4': '田中 様' };
-  const userName = DUMMY_USERS[userId || ''] || '不明な入居者';
+  // ★ マスタから displayName ("佐藤 様") を取得
+  const userName = getUserById(userId)?.displayName || '不明な入居者';
   
   // --- 1. データ取得 ---
   const fetchData = useCallback(async () => {
@@ -110,6 +115,8 @@ export const KirokuDetailPage = () => {
     let generatedText = "";
 
     const PSEUDONYM = "利用者A";
+    
+    // ★ displayName ("佐藤 様") から敬称を除去して "佐藤" を作成
     const baseName = userName.replace(/[\s\u3000]*[様さん君ちゃん]/g, '').trim();
 
     const combinedSummaries = summaries.map((s, i) => {
@@ -278,7 +285,7 @@ ${JSON.stringify(schemaDef)}
           <CareTouch 
             onSave={handleCareTouchSave} 
             initialData={careTouchData} 
-            targetDate={new Date(date || Date.now())} // ★ 追加: これがないとエラー
+            targetDate={new Date(date || Date.now())} 
           />
         )}
       </div>

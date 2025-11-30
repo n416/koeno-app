@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Box, Button, Typography, Grid, Chip, TextField, Divider, Paper, Stack, 
-  Slider, CircularProgress, Tooltip
+import {
+  Box, Button, Typography, Grid, Chip, TextField, Divider, Paper, Stack,
+  Slider, CircularProgress
 } from '@mui/material';
 import { AccessTime as TimeIcon } from '@mui/icons-material';
 import lifeSchema from '../data/life_schema.json';
@@ -28,29 +28,31 @@ interface CareTouchProps {
   onSave: (data: CareTouchRecord) => void;
   isSaving?: boolean;
   targetDate: Date;
+  // ★ 追加: スライダーの初期位置を指定する時刻 (録音時刻など)
+  initialTime?: Date;
 }
 
 // ★ StaffInputPageでも使うのでexport
 export const CATEGORY_STYLES: Record<string, { main: string, light: string, dark: string }> = {
   orange: { main: '#f97316', light: '#ffedd5', dark: '#c2410c' },
-  green:  { main: '#16a34a', light: '#dcfce7', dark: '#15803d' },
-  blue:   { main: '#2563eb', light: '#dbeafe', dark: '#1d4ed8' },
+  green: { main: '#16a34a', light: '#dcfce7', dark: '#15803d' },
+  blue: { main: '#2563eb', light: '#dbeafe', dark: '#1d4ed8' },
   indigo: { main: '#4f46e5', light: '#e0e7ff', dark: '#3730a3' },
-  red:    { main: '#dc2626', light: '#fee2e2', dark: '#b91c1c' },
+  red: { main: '#dc2626', light: '#fee2e2', dark: '#b91c1c' },
   purple: { main: '#9333ea', light: '#f3e8ff', dark: '#7e22ce' },
-  teal:   { main: '#0d9488', light: '#ccfbf1', dark: '#0f766e' },
-  gray:   { main: '#64748b', light: '#f1f5f9', dark: '#334155' }
+  teal: { main: '#0d9488', light: '#ccfbf1', dark: '#0f766e' },
+  gray: { main: '#64748b', light: '#f1f5f9', dark: '#334155' }
 };
 
 // 時間帯定義 (入力用)
 const TIME_ZONES = [
   { id: 'early_night', label: '深夜(早)', start: 0, end: 3, color: '#475569' },
-  { id: 'morning',     label: '午前',     start: 3, end: 12, color: '#ea580c' },
-  { id: 'afternoon',   label: '午後',     start: 12, end: 18, color: '#ca8a04' },
-  { id: 'night',       label: '夜',       start: 18, end: 24, color: '#1e3a8a' },
+  { id: 'morning', label: '午前', start: 3, end: 12, color: '#ea580c' },
+  { id: 'afternoon', label: '午後', start: 12, end: 18, color: '#ca8a04' },
+  { id: 'night', label: '夜', start: 18, end: 24, color: '#1e3a8a' },
 ];
 
-export const CareTouch: React.FC<CareTouchProps> = ({ initialData, onSave, isSaving = false, targetDate }) => {
+export const CareTouch: React.FC<CareTouchProps> = ({ initialData, onSave, isSaving = false, targetDate, initialTime }) => {
   const [selectedPlace, setSelectedPlace] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<SchemaCategory>(lifeSchema.categories[0] as SchemaCategory);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -69,17 +71,24 @@ export const CareTouch: React.FC<CareTouchProps> = ({ initialData, onSave, isSav
     setSelectedTags(initialData?.tags || []);
     setSelectedConditions(initialData?.conditions || []);
     setNote(initialData?.note || '');
-    
-    const now = new Date();
-    const minutes = now.getHours() * 60 + now.getMinutes();
+
+    // ★ 修正: 時刻初期化ロジック
+    // 1. initialTime が指定されていればそれを使う (録音時刻)
+    // 2. なければ現在時刻
+    const baseTime = initialTime || new Date();
+    const minutes = baseTime.getHours() * 60 + baseTime.getMinutes();
     setCurrentInputTime(minutes);
-    
-    if (!activeZoneId) {
-        const hour = now.getHours();
-        const zone = TIME_ZONES.find(z => hour >= z.start && hour < z.end);
-        setActiveZoneId(zone ? zone.id : 'morning');
+
+    // ゾーンの自動選択
+    const hour = Math.floor(minutes / 60);
+    const zone = TIME_ZONES.find(z => hour >= z.start && hour < z.end);
+    if (zone) {
+      setActiveZoneId(zone.id);
+    } else {
+      // マッチしない場合(24時ジャストなど)のフォールバック
+      setActiveZoneId('morning');
     }
-  }, [initialData]);
+  }, [initialData, initialTime]); // initialTimeの変更も監視
 
   const handleCategoryChange = (category: SchemaCategory) => {
     setSelectedCategory(category);
@@ -98,10 +107,10 @@ export const CareTouch: React.FC<CareTouchProps> = ({ initialData, onSave, isSav
     setActiveZoneId(zoneId);
     const zone = TIME_ZONES.find(z => z.id === zoneId);
     if (zone) {
-        const currentHour = Math.floor(currentInputTime / 60);
-        if (currentHour < zone.start || currentHour >= zone.end) {
-            setCurrentInputTime(zone.start * 60);
-        }
+      const currentHour = Math.floor(currentInputTime / 60);
+      if (currentHour < zone.start || currentHour >= zone.end) {
+        setCurrentInputTime(zone.start * 60);
+      }
     }
   };
 
@@ -133,59 +142,59 @@ export const CareTouch: React.FC<CareTouchProps> = ({ initialData, onSave, isSav
 
   return (
     <Box sx={{ p: 2, bgcolor: '#f1f5f9', minHeight: '100%', borderRadius: 2 }}>
-      
+
       {/* 0. 時刻入力 */}
       <Box sx={{ mb: 3, bgcolor: 'white', p: 1.5, borderRadius: 2, border: '1px solid', borderColor: 'primary.light', boxShadow: 1 }}>
         <Stack direction="row" alignItems="center" spacing={1} mb={1.5}>
-            <TimeIcon color="primary" fontSize="small" />
-            <Typography variant="subtitle2" fontWeight="bold" color="primary.main">
-                記録時刻: <Box component="span" sx={{ fontSize: '1.2rem' }}>{timeLabel}</Box>
-            </Typography>
+          <TimeIcon color="primary" fontSize="small" />
+          <Typography variant="subtitle2" fontWeight="bold" color="primary.main">
+            記録時刻: <Box component="span" sx={{ fontSize: '1.2rem' }}>{timeLabel}</Box>
+          </Typography>
         </Stack>
 
         <Grid container spacing={1} mb={activeZoneId ? 2 : 0}>
-            {TIME_ZONES.map(zone => (
-                <Grid size={{ xs: 3 }} key={zone.id}>
-                    <Button 
-                        fullWidth 
-                        variant={activeZoneId === zone.id ? "contained" : "outlined"}
-                        size="small"
-                        onClick={() => handleZoneClick(zone.id)}
-                        sx={{ 
-                            fontSize: '0.75rem', fontWeight: 'bold',
-                            bgcolor: activeZoneId === zone.id ? zone.color : 'white',
-                            borderColor: activeZoneId === zone.id ? zone.color : 'divider',
-                            color: activeZoneId === zone.id ? 'white' : 'text.secondary',
-                            boxShadow: activeZoneId === zone.id ? 2 : 0,
-                            '&:hover': { bgcolor: activeZoneId === zone.id ? zone.color : '#f8fafc' }
-                        }}
-                    >
-                        {zone.label}
-                    </Button>
-                </Grid>
-            ))}
+          {TIME_ZONES.map(zone => (
+            <Grid size={{ xs: 3 }} key={zone.id}>
+              <Button
+                fullWidth
+                variant={activeZoneId === zone.id ? "contained" : "outlined"}
+                size="small"
+                onClick={() => handleZoneClick(zone.id)}
+                sx={{
+                  fontSize: '0.75rem', fontWeight: 'bold',
+                  bgcolor: activeZoneId === zone.id ? zone.color : 'white',
+                  borderColor: activeZoneId === zone.id ? zone.color : 'divider',
+                  color: activeZoneId === zone.id ? 'white' : 'text.secondary',
+                  boxShadow: activeZoneId === zone.id ? 2 : 0,
+                  '&:hover': { bgcolor: activeZoneId === zone.id ? zone.color : '#f8fafc' }
+                }}
+              >
+                {zone.label}
+              </Button>
+            </Grid>
+          ))}
         </Grid>
 
         {activeZone && (
-            <Box sx={{ px: 3, pt: 1, pb: 0, bgcolor: '#f8fafc', borderRadius: 2 }}>
-                <Slider
-                    value={currentInputTime}
-                    onChange={handleSliderChange}
-                    min={activeZone.start * 60}
-                    max={activeZone.end * 60 - 1}
-                    step={5}
-                    valueLabelDisplay="auto"
-                    valueLabelFormat={(val) => {
-                        const h = Math.floor(val / 60);
-                        const m = val % 60;
-                        return `${h}:${m.toString().padStart(2, '0')}`;
-                    }}
-                    sx={{ color: activeZone.color, height: 6 }}
-                />
-                <Typography variant="caption" color="text.secondary" align="center" display="block">
-                    {activeZone.label} ({activeZone.start}:00 - {activeZone.end}:00)
-                </Typography>
-            </Box>
+          <Box sx={{ px: 3, pt: 1, pb: 0, bgcolor: '#f8fafc', borderRadius: 2 }}>
+            <Slider
+              value={currentInputTime}
+              onChange={handleSliderChange}
+              min={activeZone.start * 60}
+              max={activeZone.end * 60 - 1}
+              step={5}
+              valueLabelDisplay="auto"
+              valueLabelFormat={(val) => {
+                const h = Math.floor(val / 60);
+                const m = val % 60;
+                return `${h}:${m.toString().padStart(2, '0')}`;
+              }}
+              sx={{ color: activeZone.color, height: 6 }}
+            />
+            <Typography variant="caption" color="text.secondary" align="center" display="block">
+              {activeZone.label} ({activeZone.start}:00 - {activeZone.end}:00)
+            </Typography>
+          </Box>
         )}
       </Box>
 
@@ -301,10 +310,10 @@ export const CareTouch: React.FC<CareTouchProps> = ({ initialData, onSave, isSav
           onChange={(e) => setNote(e.target.value)} multiline rows={2} variant="outlined"
           sx={{ bgcolor: 'white' }}
         />
-        <Button 
+        <Button
           fullWidth variant="contained" size="large" onClick={handleSave}
           disabled={!selectedPlace || selectedTags.length === 0 || isSaving}
-          sx={{ 
+          sx={{
             height: 56, fontWeight: 'bold', fontSize: '1.1rem',
             borderRadius: 3, boxShadow: 4, bgcolor: 'text.primary', '&:hover': { bgcolor: 'black' }
           }}

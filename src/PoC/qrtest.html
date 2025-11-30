@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ブラウザQRコードリーダー</title>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+    <style>
+        body {
+            font-family: sans-serif;
+            text-align: center;
+            background-color: #f0f0f0;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            font-size: 1.2rem;
+            margin-bottom: 20px;
+        }
+        #canvas-wrapper {
+            position: relative;
+            max-width: 640px;
+            margin: 0 auto;
+            border: 2px solid #333;
+            background-color: #000;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        /* 実際に表示されるビデオ領域 */
+        canvas {
+            width: 100%;
+            display: block;
+        }
+        /* 読み取り結果の表示エリア */
+        #output {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            font-weight: bold;
+            word-break: break-all;
+            min-height: 24px;
+        }
+        .placeholder {
+            color: #ccc;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>QRコードをカメラに向けてください</h1>
+
+    <div id="canvas-wrapper">
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <div id="output">
+        <span class="placeholder">読み取り結果がここに表示されます</span>
+    </div>
+
+    <video id="video" playsinline hidden></video>
+
+    <script>
+        const video = document.getElementById("video");
+        const canvasElement = document.getElementById("canvas");
+        const canvas = canvasElement.getContext("2d");
+        const outputDiv = document.getElementById("output");
+
+        // カメラ映像の取得
+        // facingMode: "environment" でリアカメラを優先
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(function(stream) {
+            video.srcObject = stream;
+            // iOS等で全画面にならずに再生させるための設定
+            video.setAttribute("playsinline", true); 
+            video.play();
+            requestAnimationFrame(tick);
+        }).catch(function(err) {
+            console.error(err);
+            outputDiv.innerText = "カメラの起動に失敗しました。権限を確認してください。";
+        });
+
+        function tick() {
+            // カメラの準備ができているかチェック
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                // キャンバスのサイズを映像サイズに合わせる
+                canvasElement.height = video.videoHeight;
+                canvasElement.width = video.videoWidth;
+
+                // 映像をキャンバスに描画
+                canvas.drawImage(video, 0, 0, canvasElement.width, canvasElement.height);
+                
+                // キャンバスから画像データを取得
+                var imageData = canvas.getImageData(0, 0, canvasElement.width, canvasElement.height);
+                
+                // jsQRで解析
+                var code = jsQR(imageData.data, imageData.width, imageData.height, {
+                    inversionAttempts: "dontInvert",
+                });
+
+                if (code) {
+                    // QRコードが見つかった場合
+                    drawLine(code.location.topLeftCorner, code.location.topRightCorner, "#FF3B58");
+                    drawLine(code.location.topRightCorner, code.location.bottomRightCorner, "#FF3B58");
+                    drawLine(code.location.bottomRightCorner, code.location.bottomLeftCorner, "#FF3B58");
+                    drawLine(code.location.bottomLeftCorner, code.location.topLeftCorner, "#FF3B58");
+                    
+                    // 結果を表示
+                    outputDiv.innerText = code.data;
+                    
+                    // 読み取れたら色を変えるなどの処理が可能
+                    outputDiv.style.color = "#008000";
+                } else {
+                    // 何も見つからない場合
+                    outputDiv.style.color = "#333";
+                }
+            }
+            // ループ処理
+            requestAnimationFrame(tick);
+        }
+
+        // 認識したQRコードを囲む線を描画するヘルパー関数
+        function drawLine(begin, end, color) {
+            canvas.beginPath();
+            canvas.moveTo(begin.x, begin.y);
+            canvas.lineTo(end.x, end.y);
+            canvas.lineWidth = 4;
+            canvas.strokeStyle = color;
+            canvas.stroke();
+        }
+    </script>
+</body>
+</html>

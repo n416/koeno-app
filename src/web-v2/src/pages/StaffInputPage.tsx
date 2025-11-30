@@ -1,500 +1,729 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useContext, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import DockLayout, { type LayoutData, type TabData } from 'rc-dock';
+import "rc-dock/dist/rc-dock.css"; 
+import './StaffInputPage.css';
+
 import { useAuth } from '../contexts/AuthContext';
 import { GeminiApiClient } from '../lib/geminiApiClient';
 import lifeSchema from '../data/life_schema.json';
-
-// MUI
-import {
-  Box, Paper, List, ListItemButton, ListItemText, Typography, 
-  Chip, IconButton, CircularProgress, Button, Stack,
-  Dialog, DialogTitle, DialogContent, DialogActions, Badge,
-  LinearProgress, Card, CardContent, Grid, Tooltip
-} from '@mui/material';
-import { 
-  ArrowBackIos as PrevIcon, 
-  ArrowForwardIos as NextIcon,
-  Mic as MicIcon,
-  FormatListBulleted as ListIcon, 
-  AccessTime as TimeIcon,
-  History as HistoryIcon,
-  ContentCopy as CopyIcon
-} from '@mui/icons-material';
-
-// ★ CATEGORY_STYLES をインポート
-import { CareTouch, type CareTouchRecord, CATEGORY_STYLES } from '../components/CareTouch';
+import { CareTouch, type CareTouchRecord } from '../components/CareTouch';
 import { extractJson } from '../utils/jsonExtractor';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
-const API_PATH = API_BASE_URL;
+import { USERS_MASTER, type User } from '../data/usersMaster';
+import { RecordingAdjustModal } from '../components/RecordingAdjustModal';
+// 再利用モーダル
+import { ProcessedSelectionModal, type ProcessedCandidate } from '../components/ProcessedSelectionModal';
+// ★追加: 録音モーダル
+import { AudioRecorderModal } from '../components/AudioRecorderModal';
 
-const DUMMY_USERS = [
-  { id: 'u1', name: '佐藤 タロウ', room: '101', adl: '自立' },
-  { id: 'u2', name: '鈴木 ハナコ', room: '102', adl: '一部介助' },
-  { id: 'u3', name: '田中 ジロウ', room: '103', adl: '全介助' },
-  { id: 'u4', name: '高橋 サブロウ', room: '105', adl: '見守り' },
+import { 
+  ContentCopy as CopyIcon, 
+  Edit as EditIcon, 
+  DeleteOutline as DeleteIcon, 
+  Close as CloseIcon,
+  Mic as MicIcon // ★追加
+} from '@mui/icons-material';
+
+// MUIコンポーネント
+import { Tabs, Tab, Box, Typography } from '@mui/material';
+
+const API_PATH = import.meta.env.VITE_API_BASE_URL || '';
+const DOCK_STYLE: React.CSSProperties = { position: 'absolute', inset: 0 };
+
+const TIME_ZONES_DEF = [
+  { label: '深夜', start: 0, end: 3, className: 'zone-midnight' },
+  { label: '午前', start: 3, end: 12, className: 'zone-morning' },
+  { label: '午後', start: 12, end: 18, className: 'zone-afternoon' },
+  { label: '夜',   start: 18, end: 24, className: 'zone-night' },
 ];
 
-interface CareEvent {
-  event_id: number;
-  user_id: string; 
-  event_timestamp: string;
-  event_type: string;
-  care_touch_data: CareTouchRecord | null;
-  note_text: string | null;
-  recorded_by: string;
+const getCategoryThemeClass = (category: string | undefined): string => {
+  if (!category) return 'theme-gray';
+  if (category === '食事') return 'theme-orange';
+  if (category === '排泄') return 'theme-green';
+  if (category === '入浴') return 'theme-blue';
+  if (category === '移動' || category === '服薬') return 'theme-purple';
+  if (category === '医療') return 'theme-red';
+  return 'theme-gray';
+};
+
+const formatLocalDate = (date: Date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+// 処理キューのアイテム型
+interface ProcessingQueueItem {
+  recordingId: number;
+  groupId: string;
+  text: string;
+  timestamp: Date;
 }
 
-interface RecordingBase {
-  recording_id: number;
-  created_at: string;
-  caregiver_id: string;
-  summary_drafts: Record<string, string> | null;
+interface PageContextType {
+  selectedUserId: string;
+  setSelectedUserId: (id: string) => void;
+  dailyEvents: any[];
+  careTouchData: Partial<CareTouchRecord>;
+  setCareTouchData: (data: Partial<CareTouchRecord>) => void;
+  careTouchInitialTime: Date | undefined;
+  
+  handleSave: (data: CareTouchRecord) => void;
+  handleCopy: (event: any) => void;
+  handleEdit: (event: any) => void;
+  handleDelete: (event: any) => void;
+  cancelEdit: () => void;
+  openRecordingList: () => void; 
+  editingId: number | null;
+  loading: boolean;
+  saving: boolean;
+  dummyUsers: User[]; 
+  targetDate: Date;
+  changeDate: (offset: number) => void;
 }
+const PageContext = React.createContext<PageContextType | null>(null);
 
-interface UserDataCache {
-  dailyEvents: CareEvent[];
-  assignedList: RecordingBase[];
-  timestamp: number;
-}
+// --- コンポーネント (変更なし) ---
+const DateNavigatorPanel = () => {
+  const { targetDate, changeDate } = useContext(PageContext)!;
+  return (
+    <div className="panel-root panel-centered">
+      <div className="date-nav-container">
+         <button className="nav-arrow-btn" onClick={() => changeDate(-1)} aria-label="前日">◀</button>
+         <div className="date-display">
+            <span className="date-main">
+              {targetDate.toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' })}
+            </span>
+            <span className="date-sub">
+              ({targetDate.toLocaleDateString('ja-JP', { weekday: 'short' })})
+            </span>
+         </div>
+         <button className="nav-arrow-btn" onClick={() => changeDate(1)} aria-label="翌日">▶</button>
+      </div>
+    </div>
+  );
+};
+const UserListPanel = () => {
+  const { selectedUserId, setSelectedUserId, dummyUsers } = useContext(PageContext)!;
+  const navigate = useNavigate();
+  return (
+    <div className="panel-root">
+      <div className="panel-content">
+        {dummyUsers.map(user => {
+          let dotClass = 'dot-green';
+          if (user.adl === '全介助') dotClass = 'dot-red';
+          else if (user.adl === '見守り') dotClass = 'dot-orange';
+          return (
+            <div key={user.id} className={`list-item ${user.id === selectedUserId ? 'selected' : ''}`} onClick={() => setSelectedUserId(user.id)}>
+              <div className="user-row">
+                  <div className={`user-status-dot ${dotClass}`}></div>
+                  <div className="user-name">{user.name}</div>
+              </div>
+              <div className="user-meta">{user.room}</div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="dashboard-link-area">
+        <button className="dashboard-link-btn" onClick={() => navigate('/review/list')}>
+          管理者ダッシュボード
+        </button>
+      </div>
+    </div>
+  );
+};
+const HistoryListPanel = () => {
+  const { dailyEvents, loading, handleCopy, handleEdit, handleDelete, editingId } = useContext(PageContext)!;
+  if (loading) return <div className="loading-text">Loading...</div>;
+  if (!dailyEvents || dailyEvents.length === 0) return <div className="empty-text">No Records</div>;
+  return (
+    <div className="panel-root">
+      <div className="panel-content">
+        {dailyEvents.map(event => {
+            const data = event.care_touch_data || {};
+            const eventTime = new Date(event.event_timestamp);
+            const timeStr = eventTime.toLocaleTimeString('ja-JP', {hour:'2-digit', minute:'2-digit'});
+            const hour = eventTime.getHours();
+            const mins = hour * 60 + eventTime.getMinutes();
+            const zone = TIME_ZONES_DEF.find(z => hour >= z.start && hour < z.end);
+            const startMins = zone ? zone.start * 60 : 0;
+            const endMins = zone ? zone.end * 60 : 1440;
+            const percent = zone ? ((mins - startMins) / (endMins - startMins)) * 100 : 0;
+            const safePercent = Math.min(100, Math.max(0, percent));
+            const themeClass = getCategoryThemeClass(data.category);
+            const zoneClass = zone ? zone.className : 'zone-midnight';
+            const isEditing = editingId === event.event_id;
+            return (
+              <div key={event.event_id} className={`history-card ${isEditing ? 'editing' : ''} ${themeClass}`}>
+                <div className="history-left">
+                  <div className="history-header">
+                      <div className="history-meta-row">
+                          <span className="history-time">{timeStr}</span>
+                          {data.category && <span className="tag-badge">{data.category}</span>}
+                          {isEditing && <span className="editing-badge">●編集中</span>}
+                      </div>
+                      <div className="action-btn-group">
+                        <button className="action-icon-btn btn-copy" onClick={(e) => { e.stopPropagation(); handleCopy(event); }} title="コピー">
+                          <CopyIcon sx={{fontSize:14}} />
+                        </button>
+                        <button className="action-icon-btn btn-edit" onClick={(e) => { e.stopPropagation(); handleEdit(event); }} title="編集">
+                          <EditIcon sx={{fontSize:14}} />
+                        </button>
+                        <button className="action-icon-btn btn-delete" onClick={(e) => { e.stopPropagation(); handleDelete(event); }} title="削除">
+                          <DeleteIcon sx={{fontSize:14}} />
+                        </button>
+                      </div>
+                  </div>
+                  <div className="history-content">{data.tags?.join(', ')}</div>
+                  <div className="history-details">
+                    {data.place && <span className="history-detail-item">@{data.place}</span>}
+                    {data.conditions?.map((c: string) => <span key={c} className="history-condition">★{c}</span>)}
+                  </div>
+                  {event.note_text && <div className="history-note">{event.note_text}</div>}
+                </div>
+                <div className="history-right">
+                   <div className={`zone-bg ${zoneClass}`}></div>
+                   <div className="time-dot" ref={(el) => { if (el) el.style.setProperty('--dot-pos', `${safePercent}%`); }}></div>
+                </div>
+              </div>
+            );
+        })}
+      </div>
+    </div>
+  );
+};
+const InputFormPanel = () => {
+  const { careTouchData, handleSave, saving, selectedUserId, dummyUsers, editingId, cancelEdit, targetDate, careTouchInitialTime } = useContext(PageContext)!;
+  const userName = dummyUsers.find(u => u.id === selectedUserId)?.name || '';
+  return (
+    <div className="panel-root">
+      <div className={`input-header ${editingId ? 'editing' : ''}`}>
+        <div className="input-title-area">
+            <span className={`input-title ${editingId ? 'editing-text' : ''}`}>
+                {editingId ? '記録を編集中' : '新規記録入力'}
+            </span>
+            {editingId && (
+                <button onClick={cancelEdit} className="btn-clean cancel-btn" aria-label="編集を中止">
+                    <CloseIcon className="cancel-icon" /> 中止
+                </button>
+            )}
+        </div>
+        <span className="user-badge">{userName} 様</span>
+      </div>
+      <div className="panel-content input-content-area">
+        <CareTouch 
+          initialData={careTouchData} 
+          onSave={handleSave} 
+          isSaving={saving} 
+          targetDate={targetDate} 
+          initialTime={careTouchInitialTime} 
+        />
+      </div>
+    </div>
+  );
+};
 
-// 表示用の時間帯定義 (CareTouchと合わせる)
-const TIME_ZONES_DISPLAY = [
-  { label: '深夜', start: 0, end: 3, color: '#475569' },
-  { label: '午前', start: 3, end: 12, color: '#ea580c' },
-  { label: '午後', start: 12, end: 18, color: '#ca8a04' },
-  { label: '夜',   start: 18, end: 24, color: '#1e3a8a' },
-];
+// --- メインコンポーネント ---
+const STORAGE_KEY = 'carelog_layout_final_v8'; 
 
 export const StaffInputPage = () => {
   const auth = useAuth();
-  const navigate = useNavigate();
-
-  const [selectedUserId, setSelectedUserId] = useState<string>(DUMMY_USERS[0].id);
+  const [selectedUserId, setSelectedUserId] = useState<string>(USERS_MASTER[0].id);
   const [targetDate, setTargetDate] = useState<Date>(new Date());
   
+  const [dailyEventsRaw, setDailyEventsRaw] = useState<any[]>([]);
+  const [assignedList, setAssignedList] = useState<any[]>([]);
+  const [unassignedList, setUnassignedList] = useState<any[]>([]);
   const [careTouchData, setCareTouchData] = useState<Partial<CareTouchRecord>>({});
-  
-  const [dailyEvents, setDailyEvents] = useState<CareEvent[]>([]);
-  const [assignedList, setAssignedList] = useState<RecordingBase[]>([]);
-  const [unassignedList, setUnassignedList] = useState<RecordingBase[]>([]);
-  
+  const [careTouchInitialTime, setCareTouchInitialTime] = useState<Date | undefined>(undefined);
+
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
-  const [isRecordingListOpen, setIsRecordingListOpen] = useState(false);
 
-  const [dataCache, setDataCache] = useState<Record<string, UserDataCache>>({});
+  const [isListModalOpen, setIsListModalOpen] = useState(false);
+  const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false);
+  const [adjustRecordingId, setAdjustRecordingId] = useState<number | null>(null);
+  const [isAdjustHistoryMode, setIsAdjustHistoryMode] = useState(false);
+  const [listModalTab, setListModalTab] = useState(0);
+
+  // 再利用モーダル用のState
+  const [isReuseModalOpen, setIsReuseModalOpen] = useState(false);
+  const [reuseCandidates, setReuseCandidates] = useState<ProcessedCandidate[]>([]);
+
+  // ★追加: 録音モーダル用のState
+  const [isRecorderOpen, setIsRecorderOpen] = useState(false);
+
+  const [processQueue, setProcessQueue] = useState<ProcessingQueueItem[]>([]);
+  const [currentProcessItem, setCurrentProcessItem] = useState<ProcessingQueueItem | null>(null);
+
+  const dockRef = useRef<DockLayout>(null);
   const requestIdRef = useRef(0);
-  const topAnchorRef = useRef<HTMLDivElement>(null); 
+  const dateStr = formatLocalDate(targetDate);
+  const currentUser = USERS_MASTER.find(u => u.id === selectedUserId) || USERS_MASTER[0];
 
-  const dateStr = targetDate.toISOString().split('T')[0];
-  const currentUser = DUMMY_USERS.find(u => u.id === selectedUserId) || DUMMY_USERS[0];
+  const sortedDailyEvents = useMemo(() => {
+    return [...dailyEventsRaw].sort((a, b) => 
+      new Date(a.event_timestamp).getTime() - new Date(b.event_timestamp).getTime()
+    );
+  }, [dailyEventsRaw]);
 
-  useEffect(() => {
-    setDataCache({});
-  }, [dateStr]);
-
-  const loadUserData = useCallback(async () => {
-    if (!auth.caregiverId) return;
-
-    const currentRequestId = ++requestIdRef.current;
-    setLoading(true);
-
-    const cached = dataCache[selectedUserId];
-    if (cached) {
-      setDailyEvents(cached.dailyEvents);
-      setAssignedList(cached.assignedList);
-      setCareTouchData({});
+  const displayRecordingList = useMemo(() => {
+    if (listModalTab === 0) {
+      return unassignedList; 
     } else {
-      setDailyEvents([]);
-      setAssignedList([]);
-      setCareTouchData({});
+      const combined = [...assignedList, ...unassignedList];
+      combined.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      return combined;
     }
-
-    try {
-      const headers = { 'X-Caller-ID': auth.caregiverId };
-
-      const [eventsRes, assignedRes, unassignedRes] = await Promise.all([
-        fetch(`${API_PATH}/daily_events?user_id=${selectedUserId}&date=${dateStr}`, { headers }),
-        fetch(`${API_PATH}/assigned_recordings?user_id=${selectedUserId}&record_date=${dateStr}`, { headers }),
-        fetch(`${API_PATH}/unassigned_recordings?caregiver_id=${auth.caregiverId}&record_date=${dateStr}`, { headers })
-      ]);
-
-      if (currentRequestId !== requestIdRef.current) return;
-
-      let newEvents: CareEvent[] = [];
-      if (eventsRes.ok) {
-        newEvents = await eventsRes.json();
-        newEvents = newEvents.map(ev => {
-            if (typeof ev.care_touch_data === 'string') {
-                try { ev.care_touch_data = JSON.parse(ev.care_touch_data); } catch(e){}
-            }
-            return ev;
-        });
-        // ★修正点1: 取得したデータを event_timestamp の昇順（古い順）にソート
-        newEvents.sort((a, b) => new Date(a.event_timestamp).getTime() - new Date(b.event_timestamp).getTime());
-      }
-
-      let newAssigned: RecordingBase[] = [];
-      if (assignedRes.ok) newAssigned = await assignedRes.json();
-      if (unassignedRes.ok) setUnassignedList(await unassignedRes.json());
-
-      setDailyEvents(newEvents);
-      setAssignedList(newAssigned);
-
-      setDataCache(prev => ({
-        ...prev,
-        [selectedUserId]: {
-          dailyEvents: newEvents,
-          assignedList: newAssigned,
-          timestamp: Date.now()
-        }
-      }));
-
-    } catch (err) {
-      console.error(err);
-    } finally {
-      if (currentRequestId === requestIdRef.current) {
-        setLoading(false);
-      }
-    }
-  }, [selectedUserId, dateStr, auth.caregiverId, dataCache]);
-
-  useEffect(() => {
-    loadUserData();
-  }, [selectedUserId, dateStr]);
-
-
-  const handleSave = async (data: CareTouchRecord) => {
-    if (!auth.caregiverId) return;
-    setSaving(true);
-    
-    try {
-      const res = await fetch(`${API_PATH}/save_event`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Caller-ID': auth.caregiverId },
-        body: JSON.stringify({
-          user_id: selectedUserId,
-          event_timestamp: data.timestamp || new Date().toISOString(),
-          event_type: 'care_touch',
-          care_touch_data: data,
-          note_text: data.note
-        })
-      });
-      
-      if (!res.ok) throw new Error(`保存失敗 (${res.status})`);
-      
-      const newEvent: CareEvent = {
-          event_id: Date.now(),
-          user_id: selectedUserId,
-          event_timestamp: data.timestamp || new Date().toISOString(),
-          event_type: 'care_touch',
-          care_touch_data: data,
-          note_text: data.note,
-          recorded_by: auth.caregiverId
-      };
-      
-      const updatedEvents = [newEvent, ...dailyEvents];
-      
-      // ★修正点2: ソート順を昇順（a - b）に変更
-      // これで新しい時刻がリストの下に来ます
-      updatedEvents.sort((a, b) => new Date(a.event_timestamp).getTime() - new Date(b.event_timestamp).getTime());
-
-      setDailyEvents(updatedEvents);
-      setCareTouchData({}); 
-      
-      setDataCache(prev => ({
-        ...prev,
-        [selectedUserId]: {
-          ...prev[selectedUserId],
-          dailyEvents: updatedEvents,
-          assignedList: assignedList,
-          timestamp: Date.now()
-        }
-      }));
-
-    } catch (err) {
-      alert("保存エラー: " + err);
-    }
-    setSaving(false);
-  };
-
-  const handleGenerateFromVoice = async () => {
-    const apiKey = localStorage.getItem('geminiApiKey');
-    const modelId = localStorage.getItem('geminiModelId');
-    const isNoApiMode = localStorage.getItem('noApiMode') === 'true';
-
-    if ((!apiKey || !modelId) && !isNoApiMode) {
-      alert("Gemini APIキー設定が必要です");
-      return;
-    }
-
-    const summaries = assignedList
-      .filter(rec => rec.summary_drafts && rec.summary_drafts[selectedUserId])
-      .map(rec => rec.summary_drafts![selectedUserId]);
-
-    if (summaries.length === 0) {
-      alert("この利用者に紐づけられた録音がありません。\n「今日の録音一覧」から会話を紐づけてください。");
-      return;
-    }
-
-    setAiLoading(true);
-
-    try {
-        const client = new GeminiApiClient(apiKey);
-        const PSEUDONYM = "利用者A";
-        const combinedText = summaries.join("\n").replaceAll(currentUser.name.split(' ')[0], PSEUDONYM);
-
-        const schemaDef = lifeSchema.categories.map(cat => ({ category: cat.label, items: cat.items }));
-        const conditionsDef = lifeSchema.conditions;
-
-        const prompt = `以下の会話記録から、直近のケア内容を1つ選びCareTouch形式で出力してください。
-対象: ${PSEUDONYM}
-
-# 記録内容
-${combinedText}
-
-# 選択肢定義
-${JSON.stringify(schemaDef)}
-状態: ${JSON.stringify(conditionsDef)}
-
-# 出力JSON
-{
-  "place": "居室",
-  "category": "食事",
-  "tags": ["完食"],
-  "conditions": ["スムーズ"],
-  "note": "AI要約"
-}`;
-        
-        const result = await client.generateIsolatedContent(prompt, modelId || '');
-        const json = extractJson(result);
-        
-        if (json) {
-            setCareTouchData(json);
-        } else {
-            alert("データ抽出失敗");
-        }
-
-    } catch (e) {
-        console.error(e);
-        alert("AI生成エラー: " + e);
-    }
-    setAiLoading(false);
-  };
-
-  const handleCopyEvent = (event: CareEvent) => {
-    if (!event.care_touch_data) return;
-    setCareTouchData(event.care_touch_data);
-    if (topAnchorRef.current) {
-        topAnchorRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  };
+  }, [listModalTab, unassignedList, assignedList]);
 
   const changeDate = (offset: number) => {
     const d = new Date(targetDate);
     d.setDate(d.getDate() + offset);
     setTargetDate(d);
+    setEditingId(null);
+    setCareTouchData({});
+    setCareTouchInitialTime(undefined);
   };
 
-  const handleNavigateToAdjust = (recordingId: number) => {
-    navigate(`/review/adjust/${recordingId}`, { 
-      state: { fromUserId: selectedUserId, fromDate: dateStr } 
+  const handleCopy = (event: any) => {
+    setEditingId(null);
+    if (event.care_touch_data) {
+        setCareTouchData({ ...event.care_touch_data });
+        setCareTouchInitialTime(new Date(event.care_touch_data.timestamp));
+    }
+  };
+  const handleEdit = (event: any) => {
+    setEditingId(event.event_id);
+    if (event.care_touch_data) {
+        setCareTouchData({ ...event.care_touch_data });
+        setCareTouchInitialTime(new Date(event.care_touch_data.timestamp));
+    }
+  };
+  const cancelEdit = () => {
+    setEditingId(null);
+    setCareTouchData({});
+    setCareTouchInitialTime(undefined);
+  };
+  const handleDelete = async (event: any) => {
+    if (!confirm('削除しますか？')) return;
+    try {
+        setDailyEventsRaw(prev => prev.filter(e => e.event_id !== event.event_id));
+        if (editingId === event.event_id) cancelEdit();
+    } catch(e) { alert("削除失敗"); }
+  };
+
+  const openRecordingList = () => {
+    setListModalTab(0);
+    setIsListModalOpen(true);
+  };
+
+  const handleOpenAdjust = (recordingId: number) => {
+    const isAssigned = assignedList.some((r: any) => r.recording_id === recordingId);
+    setIsListModalOpen(false); 
+    setAdjustRecordingId(recordingId);
+    setIsAdjustHistoryMode(isAssigned); 
+    setIsAdjustModalOpen(true); 
+  };
+
+  const handleAdjustSuccess = () => {
+    setIsAdjustModalOpen(false);
+    setAdjustRecordingId(null);
+    setIsAdjustHistoryMode(false);
+    loadUserData(); 
+  };
+
+  const loadUserData = async () => {
+    if (!auth.caregiverId) return;
+    setLoading(true);
+    const currentRequestId = ++requestIdRef.current;
+    try {
+        const headers = { 'X-Caller-ID': auth.caregiverId };
+        const [eventsRes, assignedRes, unassignedRes] = await Promise.all([
+            fetch(`${API_PATH}/daily_events?user_id=${selectedUserId}&date=${dateStr}`, { headers }),
+            fetch(`${API_PATH}/assigned_recordings?user_id=${selectedUserId}&record_date=${dateStr}`, { headers }),
+            fetch(`${API_PATH}/unassigned_recordings?caregiver_id=${auth.caregiverId}&record_date=${dateStr}`, { headers })
+        ]);
+        if (currentRequestId !== requestIdRef.current) return;
+
+        if (eventsRes.ok) {
+            let events = await eventsRes.json();
+            events = events.map((ev: any) => {
+                if (typeof ev.care_touch_data === 'string') { try { ev.care_touch_data = JSON.parse(ev.care_touch_data); } catch(e){} }
+                return ev;
+            });
+            setDailyEventsRaw(events);
+        } else setDailyEventsRaw([]);
+        
+        if (assignedRes.ok) setAssignedList(await assignedRes.json());
+        if (unassignedRes.ok) setUnassignedList(await unassignedRes.json());
+    } catch(e) { console.error(e); } 
+    finally { if (currentRequestId === requestIdRef.current) setLoading(false); }
+  };
+
+  useEffect(() => { 
+      loadUserData(); 
+      setEditingId(null); 
+      setCareTouchData({}); 
+      setCareTouchInitialTime(undefined);
+  }, [selectedUserId, dateStr, auth.caregiverId]);
+
+  useEffect(() => {
+    if (!currentProcessItem && processQueue.length > 0 && !aiLoading && !editingId) {
+      const nextItem = processQueue[0];
+      setCurrentProcessItem(nextItem);
+      executeAiAnalysis(nextItem);
+    }
+  }, [processQueue, currentProcessItem, aiLoading, editingId]);
+
+  const executeAiAnalysis = async (item: ProcessingQueueItem) => {
+    const apiKey = localStorage.getItem('geminiApiKey');
+    const modelId = localStorage.getItem('geminiModelId');
+
+    setAiLoading(true);
+    try {
+        const client = new GeminiApiClient(apiKey || '');
+        const maskedText = item.text.replaceAll(currentUser.name.split(' ')[0], "利用者");
+        const schemaDef = lifeSchema.categories.map(cat => ({ category: cat.label, items: cat.items }));
+        const prompt = `以下の会話記録から、直近のケア内容を1つ選びJSONで出力。\n対象: 利用者\n# 記録\n${maskedText}\n\n# 指示\n会話内に具体的な時刻（例: '14時30分', 'さっき', '昼食時'など）が含まれる場合、それを優先して time_override フィールド（HH:MM形式 または ISO）に出力してください。\n\n# 定義\n${JSON.stringify(schemaDef)}\n# 出力形式\n{"place":"居室","category":"食事","tags":["完食"],"conditions":["スムーズ"],"note":"AI要約", "time_override": "14:30"}`;
+        
+        const result = await client.generateIsolatedContent(prompt, modelId || '');
+        const json = extractJson(result);
+        if (json) {
+          setCareTouchData(json);
+          let finalTime = item.timestamp;
+          if (json.time_override) {
+             const timeMatch = json.time_override.match(/(\d{1,2})[:：](\d{2})/);
+             if (timeMatch) {
+                 const newTime = new Date(targetDate);
+                 newTime.setHours(parseInt(timeMatch[1], 10));
+                 newTime.setMinutes(parseInt(timeMatch[2], 10));
+                 finalTime = newTime;
+             }
+          }
+          setCareTouchInitialTime(finalTime);
+        } else {
+          alert("解析失敗");
+          skipCurrentQueueItem();
+        }
+    } catch (e) { 
+      alert("AIエラー: " + e); 
+      skipCurrentQueueItem();
+    }
+    setAiLoading(false);
+  };
+
+  const skipCurrentQueueItem = () => {
+    setProcessQueue(prev => prev.slice(1));
+    setCurrentProcessItem(null);
+    setCareTouchData({});
+    setCareTouchInitialTime(undefined);
+  };
+
+  const handleGenerateFromVoice = async () => {
+    const apiKey = localStorage.getItem('geminiApiKey');
+    const isNoApiMode = localStorage.getItem('noApiMode') === 'true';
+
+    if (!apiKey && !isNoApiMode) { alert("APIキー未設定"); return; }
+
+    const collectCandidates = (onlyUnprocessed: boolean): ProcessedCandidate[] => {
+        const results: ProcessedCandidate[] = [];
+        assignedList.forEach((rec: any) => {
+            if (!rec.assignment_snapshot || !Array.isArray(rec.assignment_snapshot)) return;
+            const recordingStartTime = new Date(rec.created_at);
+            let currentGroup: any = null;
+            let currentTextBuffer: string[] = [];
+            let currentGroupStartSec: number | null = null; 
+
+            const pushGroup = () => {
+                if (currentGroup && currentGroup.userId === selectedUserId) {
+                    const isTarget = onlyUnprocessed ? !currentGroup.processed : currentGroup.processed;
+                    if (isTarget && currentTextBuffer.length > 0) {
+                        const timestamp = new Date(recordingStartTime.getTime() + (currentGroupStartSec || 0) * 1000);
+                        results.push({
+                            recordingId: rec.recording_id,
+                            groupId: currentGroup.id,
+                            text: currentTextBuffer.join('\n'),
+                            timestamp: timestamp
+                        });
+                    }
+                }
+            };
+
+            rec.assignment_snapshot.forEach((row: any) => {
+                if (row.type === 'assignment') {
+                    pushGroup();
+                    currentGroup = row;
+                    currentTextBuffer = [];
+                    currentGroupStartSec = null; 
+                } else if (row.type === 'transcript') {
+                    if (currentGroup && row.assignedTo === currentGroup.userId) {
+                        currentTextBuffer.push(row.text);
+                        if (currentGroupStartSec === null) { currentGroupStartSec = row.start; }
+                    }
+                }
+            });
+            pushGroup(); 
+        });
+        return results;
+    };
+
+    const unprocessedItems = collectCandidates(true);
+
+    if (unprocessedItems.length > 0) {
+        if (unprocessedItems.length > 1) {
+            alert(`${unprocessedItems.length}件の未処理データを検出しました。\n順番に入力・登録を行います。`);
+        }
+        setProcessQueue(unprocessedItems); 
+        return;
+    }
+
+    const processedItems = collectCandidates(false);
+
+    if (processedItems.length > 0) {
+        setReuseCandidates(processedItems);
+        setIsReuseModalOpen(true);
+    } else {
+        alert("この利用者に関連付けられた会話データがありません。\n未紐づけ録音から割り当てを行ってください。");
+    }
+  };
+
+  const handleReuseSelected = (selectedItems: ProcessedCandidate[]) => {
+      setProcessQueue(selectedItems);
+  };
+
+  const handleSave = async (data: CareTouchRecord) => {
+    if (!auth.caregiverId) return;
+    setSaving(true);
+    try {
+      const payload = {
+          user_id: selectedUserId,
+          event_timestamp: data.timestamp || new Date().toISOString(),
+          event_type: 'care_touch',
+          care_touch_data: data,
+          note_text: data.note,
+          event_id: editingId || undefined
+      };
+      const res = await fetch(`${API_PATH}/save_event`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Caller-ID': auth.caregiverId },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) throw new Error("保存失敗");
+      
+      if (currentProcessItem) {
+        await markAssignmentAsProcessed(currentProcessItem.recordingId, currentProcessItem.groupId);
+        setProcessQueue(prev => prev.slice(1));
+        setCurrentProcessItem(null);
+        setCareTouchData({});
+        setCareTouchInitialTime(undefined);
+        
+        if (processQueue.length <= 1) {
+           alert("すべての連続入力が完了しました！");
+        }
+      } else {
+        if (editingId) {
+            setDailyEventsRaw(prev => prev.map(ev => ev.event_id === editingId ? { ...ev, care_touch_data: data, note_text: data.note, event_timestamp: payload.event_timestamp } : ev));
+            setEditingId(null);
+        } else {
+            const newEvent = { event_id: Date.now(), user_id: selectedUserId, event_timestamp: payload.event_timestamp, care_touch_data: data, note_text: data.note, recorded_by: auth.caregiverId };
+            setDailyEventsRaw(prev => [...prev, newEvent]);
+        }
+        setCareTouchData({});
+        setCareTouchInitialTime(undefined);
+      }
+      
+      loadUserData();
+
+    } catch(e) { alert("保存エラー: " + e); }
+    setSaving(false);
+  };
+
+  const markAssignmentAsProcessed = async (recordingId: number, groupId: string) => {
+    const targetRec = assignedList.find(r => r.recording_id === recordingId);
+    if (!targetRec || !targetRec.assignment_snapshot) return;
+
+    const newSnapshot = targetRec.assignment_snapshot.map((row: any) => {
+      if (row.type === 'assignment' && row.id === groupId) {
+        return { ...row, processed: true };
+      }
+      return row;
+    });
+
+    const userIds = Array.from(new Set(newSnapshot.filter((r:any) => r.type==='assignment').map((r:any) => r.userId)));
+    
+    await fetch(`${API_PATH}/save_assignments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Caller-ID': auth.caregiverId! },
+        body: JSON.stringify({
+          recording_id: recordingId,
+          user_ids: userIds,
+          assignment_snapshot: newSnapshot,
+          summary_drafts: targetRec.summary_drafts || {} 
+        }),
     });
   };
 
+  const defaultLayout: LayoutData = {
+    dockbox: {
+      mode: 'horizontal',
+      children: [
+        {
+          mode: 'vertical',
+          size: 300, 
+          children: [
+             { tabs: [{ id: 'dateNavigator', title: '対象日', closable: false, content: <div /> }], size: 40 },
+             { tabs: [{ id: 'userList', title: '利用者', closable: false, content: <div /> }], size: 200 },
+             { tabs: [{ id: 'historyList', title: '本日の履歴', closable: false, content: <div /> }] }
+          ]
+        },
+        {
+          size: 700, 
+          tabs: [{ id: 'inputForm', title: '記録入力', closable: false, content: <div /> }]
+        }
+      ]
+    }
+  };
+
+  const [layout, setLayout] = useState<LayoutData | undefined>(undefined);
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    setLayout(saved ? JSON.parse(saved) : defaultLayout);
+  }, []);
+
+  const loadTab = (data: TabData): TabData => {
+    let content;
+    let title = data.title;
+    switch (data.id) {
+      case 'dateNavigator': content = <DateNavigatorPanel />; title = '対象日'; break;
+      case 'userList': content = <UserListPanel />; title = '利用者'; break;
+      case 'inputForm': content = <InputFormPanel />; title = '記録入力'; break;
+      case 'historyList': content = <HistoryListPanel />; title = '本日の履歴'; break;
+      default: content = <div>Not Found</div>; title = 'Unknown';
+    }
+    return { ...data, id: data.id, title, content, closable: false };
+  };
+  const onLayoutChange = (newLayout: LayoutData) => {
+    setLayout(newLayout);
+    if (dockRef.current) localStorage.setItem(STORAGE_KEY, JSON.stringify(dockRef.current.saveLayout()));
+  };
+  const handleReset = () => {
+    if(confirm("レイアウトをリセットしますか？")){
+        localStorage.removeItem(STORAGE_KEY);
+        location.reload();
+    }
+  };
+
+  if (!layout) return null;
+
   return (
-    <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden', bgcolor: '#f1f5f9' }}>
-      
-      {/* 左ペイン */}
-      <Box sx={{ width: '300px', bgcolor: 'white', borderRight: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', zIndex: 10 }}>
-        <Box sx={{ p: 2, bgcolor: '#1e293b', color: 'white' }}>
-          <Typography variant="h6" fontWeight="bold" color="white">利用者リスト</Typography>
-        </Box>
-        <List sx={{ flex: 1, overflowY: 'auto', p: 1 }}>
-          {DUMMY_USERS.map(user => {
-            const isSelected = user.id === selectedUserId;
-            return (
-              <ListItemButton 
-                key={user.id}
-                onClick={() => setSelectedUserId(user.id)}
-                sx={{ 
-                  mb: 1, borderRadius: 2,
-                  bgcolor: isSelected ? '#f1f5f9' : 'transparent',
-                  border: isSelected ? '2px solid #334155' : '1px solid transparent',
-                  '&:hover': { bgcolor: '#f8fafc' }
-                }}
-              >
-                <ListItemText 
-                  primary={<Typography fontWeight="bold">{user.name}</Typography>}
-                  secondary={<Typography variant="caption">{user.room}号室</Typography>}
-                />
-              </ListItemButton>
-            );
-          })}
-        </List>
-        <Box sx={{ p: 2, borderTop: '1px solid #e2e8f0' }}>
-          <Button fullWidth variant="outlined" onClick={() => navigate('/review/list')}>管理者ダッシュボード</Button>
-        </Box>
-      </Box>
+    <PageContext.Provider value={{
+      selectedUserId, setSelectedUserId, 
+      dailyEvents: sortedDailyEvents,
+      careTouchData, setCareTouchData,
+      careTouchInitialTime, 
+      handleSave, handleCopy, handleEdit, handleDelete, cancelEdit, editingId,
+      openRecordingList,
+      loading, saving, dummyUsers: USERS_MASTER, targetDate, changeDate
+    }}>
+      <div className="app-container">
+        <header className="app-header">
+          <div className="app-title">CareLog Pro <span className="app-version">v4.3</span></div>
+          <div className="header-actions">
+            
+            {/* ★ 追加: 新規録音ボタン */}
+            <button className="btn-clean" onClick={() => setIsRecorderOpen(true)} style={{ color: '#d32f2f', borderColor: '#d32f2f' }}>
+              <MicIcon sx={{ fontSize: 16, mr: 0.5 }} /> 新規録音
+            </button>
 
-      {/* 右ペイン */}
-      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative' }}>
-        
-        {/* ヘッダー */}
-        <Box sx={{ bgcolor: 'white', borderBottom: '1px solid #e2e8f0', position: 'relative' }}>
-          <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Typography variant="h6" fontWeight="bold" color="text.primary">
-              {currentUser.name} <Box component="span" sx={{fontSize:'0.8rem', color:'#64748b'}}>({dateStr})</Box>
-            </Typography>
-            <Stack direction="row" spacing={2} alignItems="center">
-               <Button variant="outlined" color="primary" startIcon={<Badge badgeContent={unassignedList.length} color="error"><ListIcon /></Badge>} onClick={() => setIsRecordingListOpen(true)}>今日の録音一覧</Button>
-               <Button variant="contained" color="primary" startIcon={aiLoading ? <CircularProgress size={20} color="inherit"/> : <MicIcon />} onClick={handleGenerateFromVoice} disabled={aiLoading || loading} sx={{ fontWeight: 'bold' }}>{aiLoading ? 'AI入力中...' : '音声から生成'}</Button>
-            </Stack>
-          </Box>
-          {loading && <LinearProgress sx={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 3, zIndex: 10 }} />}
-        </Box>
+            <button className="btn-clean btn-unassigned" onClick={openRecordingList}>
+              録音リスト ({unassignedList.length + assignedList.length})
+            </button>
+            <button className="btn-primary" onClick={handleGenerateFromVoice} disabled={aiLoading || currentProcessItem !== null}>
+                {aiLoading ? 'AI解析中...' : '音声から入力'}
+            </button>
+            <div className="header-divider"></div>
+            <button className="btn-clean" onClick={handleReset}>配置リセット</button>
+            <button className="btn-clean">ログアウト</button>
+          </div>
+        </header>
+        <div className="main-layout-area">
+          <DockLayout ref={dockRef} defaultLayout={layout} loadTab={loadTab} onLayoutChange={onLayoutChange} style={DOCK_STYLE} />
+        </div>
 
-        {/* メインコンテンツ */}
-        <Box sx={{ flex: 1, overflowY: 'auto', p: 3, pb: 12 }}>
-          <div ref={topAnchorRef} />
-          
-          {/* 入力フォーム */}
-          <Paper sx={{ mb: 4, overflow: 'hidden' }}>
-            <Box sx={{ px: 2, py: 1, bgcolor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-              <Typography variant="subtitle2" fontWeight="bold" color="text.secondary">新規記録</Typography>
-            </Box>
-            <CareTouch 
-              initialData={careTouchData}
-              onSave={handleSave}
-              isSaving={saving}
-              targetDate={targetDate}
-            />
-          </Paper>
+        {currentProcessItem && (
+           <div style={{background: '#e0f2f1', padding: '8px 16px', color: '#00695c', fontSize: '0.9rem', fontWeight: 'bold', borderBottom:'1px solid #b2dfdb', display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+             <span>🔄 連続入力モード: 残り {processQueue.length} 件 (現在の対象: {currentProcessItem.text.slice(0, 15)}...)</span>
+             <button onClick={skipCurrentQueueItem} style={{marginLeft:10, padding:'2px 8px', cursor:'pointer', border:'1px solid #00695c', borderRadius:'4px', background:'transparent'}}>スキップ</button>
+           </div>
+        )}
 
-          {/* 履歴リスト */}
-          <Typography variant="h6" fontWeight="bold" sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-            <HistoryIcon /> 本日の履歴 ({dailyEvents.length})
-          </Typography>
-          
-          <Stack spacing={2}>
-            {dailyEvents.length === 0 && <Typography color="text.secondary" sx={{ml:1}}>記録はまだありません</Typography>}
-            {dailyEvents.map(event => {
-                const data = event.care_touch_data;
-                const eventTime = new Date(event.event_timestamp);
-                const timeStr = eventTime.toLocaleTimeString('ja-JP', {hour:'2-digit', minute:'2-digit'});
-                const mins = eventTime.getHours() * 60 + eventTime.getMinutes();
+        {isListModalOpen && (
+          <div className="modal-overlay" onClick={() => setIsListModalOpen(false)}>
+            <div className="modal-content" onClick={e => e.stopPropagation()}>
+              <div className="modal-header" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                  <span>録音リスト ({dateStr})</span>
+                  <button className="btn-clean" onClick={() => setIsListModalOpen(false)} aria-label="閉じる"><CloseIcon sx={{fontSize:16}} /></button>
+                </div>
+                <Tabs value={listModalTab} onChange={(_, val) => setListModalTab(val)} sx={{ minHeight: 36, width: '100%' }}>
+                  <Tab label={`未処理 (${unassignedList.length})`} sx={{ minHeight: 36, fontSize: '0.8rem' }} />
+                  <Tab label={`すべて (${unassignedList.length + assignedList.length})`} sx={{ minHeight: 36, fontSize: '0.8rem' }} />
+                </Tabs>
+              </div>
+              <div className="modal-body">
+                {displayRecordingList.length === 0 ? <div style={{padding:20}}>なし</div> : (
+                  <ul className="modal-list">
+                    {displayRecordingList.map((rec: any) => {
+                      const isAssigned = assignedList.some((r: any) => r.recording_id === rec.recording_id);
+                      return (
+                        <li key={rec.recording_id} className="modal-list-item" onClick={() => handleOpenAdjust(rec.recording_id)} style={{ opacity: isAssigned ? 0.6 : 1 }}>
+                          <div style={{fontWeight:'bold'}}>
+                            {isAssigned ? '✅ ' : '🔵 '} 
+                            録音ID: {rec.recording_id}
+                          </div>
+                          <div style={{fontSize:'11px', color:'#666'}}>{new Date(rec.created_at).toLocaleTimeString()} - {rec.caregiver_id}</div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
-                // どのゾーンに属するか判定
-                const hour = eventTime.getHours();
-                const zone = TIME_ZONES_DISPLAY.find(z => hour >= z.start && hour < z.end);
-                const zoneLabel = zone ? zone.label : '不明';
-                const zoneColor = zone ? zone.color : '#999';
+        <RecordingAdjustModal
+          open={isAdjustModalOpen}
+          onClose={() => setIsAdjustModalOpen(false)}
+          recordingId={adjustRecordingId}
+          onSaveSuccess={handleAdjustSuccess}
+          isHistoryMode={isAdjustHistoryMode}
+        />
 
-                // ゾーン内での相対位置(%)
-                const zoneStartMins = (zone ? zone.start : 0) * 60;
-                const zoneEndMins = (zone ? zone.end : 24) * 60;
-                const percent = zone ? ((mins - zoneStartMins) / (zoneEndMins - zoneStartMins)) * 100 : 0;
-                // 0-100%内に収める
-                const safePercent = Math.min(100, Math.max(0, percent));
+        <ProcessedSelectionModal
+          open={isReuseModalOpen}
+          onClose={() => setIsReuseModalOpen(false)}
+          processedItems={reuseCandidates}
+          onSelect={handleReuseSelected}
+        />
 
-                const catColor = data?.category && lifeSchema.categories.find(c => c.label === data.category)?.color;
-                const borderColor = catColor && CATEGORY_STYLES[catColor] ? CATEGORY_STYLES[catColor].main : '#e2e8f0';
+        {/* ★追加: 録音モーダル */}
+        <AudioRecorderModal
+          open={isRecorderOpen}
+          onClose={() => setIsRecorderOpen(false)}
+          onUploadSuccess={() => {
+            loadUserData(); // リスト更新
+            // 必要ならここで「未紐づけリスト」を自動で開くことも可能
+          }}
+        />
 
-                return (
-                    <Card key={event.event_id} variant="outlined" sx={{ borderLeft: `4px solid ${borderColor}` }}>
-                        <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
-                            <Grid container spacing={2} alignItems="center">
-                                
-                                {/* 左: 内容 (70%) */}
-                                <Grid size={{ xs: 8 }}>
-                                    <Stack direction="row" alignItems="center" spacing={1} mb={0.5}>
-                                        <Typography variant="body2" color="text.secondary" sx={{ display:'flex', alignItems:'center', gap:0.5 }}>
-                                            <TimeIcon fontSize="small" /> {timeStr}
-                                        </Typography>
-                                        <Chip label={data?.category} size="small" sx={{ fontWeight:'bold', bgcolor: CATEGORY_STYLES[catColor || 'gray'].light, color: CATEGORY_STYLES[catColor || 'gray'].dark }} />
-                                        {data?.place && <Chip label={`@${data.place}`} size="small" variant="outlined" />}
-                                    </Stack>
-                                    <Typography variant="body1" fontWeight="bold">
-                                        {data?.tags?.join(', ')}
-                                    </Typography>
-                                    <Stack direction="row" gap={1} flexWrap="wrap">
-                                        {data?.conditions?.map(c => (
-                                            <Typography key={c} variant="caption" color="error">★ {c}</Typography>
-                                        ))}
-                                    </Stack>
-                                    {event.note_text && (
-                                        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, bgcolor:'#f8fafc', p:0.5, borderRadius:1 }}>
-                                            {event.note_text}
-                                        </Typography>
-                                    )}
-                                    <Button 
-                                      size="small" 
-                                      startIcon={<CopyIcon />} 
-                                      onClick={() => handleCopyEvent(event)}
-                                      sx={{ color: 'text.secondary', mt: 1 }}
-                                    >
-                                      コピーして登録
-                                    </Button>
-                                </Grid>
-
-                                {/* 右: 個別タイムライン (30%) */}
-                                <Grid size={{ xs: 4 }}>
-                                    <Box sx={{ position: 'relative', width: '100%', height: 24, bgcolor: '#f1f5f9', borderRadius: 1, overflow: 'hidden' }}>
-                                        {/* ゾーン背景 (1つのバーのみ) */}
-                                        <Box sx={{ 
-                                            position: 'absolute', top: 0, bottom: 0, left: 0, width: '100%', 
-                                            bgcolor: zoneColor, opacity: 0.3
-                                        }} />
-                                        
-                                        {/* ゾーンラベル (左端) */}
-                                        <Typography variant="caption" sx={{ position:'absolute', left:4, top:'50%', transform:'translateY(-50%)', color:'#555', fontSize:'0.65rem', fontWeight:'bold' }}>
-                                            {zoneLabel}
-                                        </Typography>
-
-                                        {/* 時刻マーク (●) */}
-                                        <Tooltip title={timeStr} arrow placement="top">
-                                            <Box sx={{ 
-                                                position: 'absolute', top: '50%', left: `${safePercent}%`, 
-                                                transform: 'translate(-50%, -50%)',
-                                                width: 12, height: 12, borderRadius: '50%',
-                                                bgcolor: borderColor, border: '2px solid white', boxShadow: 1
-                                            }} />
-                                        </Tooltip>
-                                    </Box>
-                                </Grid>
-
-                            </Grid>
-                        </CardContent>
-                    </Card>
-                );
-            })}
-          </Stack>
-        </Box>
-
-        {/* 右下: 日付操作 */}
-        <Paper elevation={4} sx={{ position: 'absolute', bottom: 30, right: 30, p: 1.5, display: 'flex', alignItems: 'center', borderRadius: 8, bgcolor: '#ffffff', border: '1px solid #e2e8f0', zIndex: 100 }}>
-          <IconButton size="small" onClick={() => changeDate(-1)}><PrevIcon fontSize="small" /></IconButton>
-          <Typography fontWeight="bold" fontSize="1.2rem" sx={{ mx: 2 }}>
-            {targetDate.toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short' })}
-          </Typography>
-          <IconButton size="small" onClick={() => changeDate(1)}><NextIcon fontSize="small" /></IconButton>
-        </Paper>
-      </Box>
-
-      {/* モーダル */}
-      <Dialog open={isRecordingListOpen} onClose={() => setIsRecordingListOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>本日の未紐づけ録音</DialogTitle>
-        <DialogContent dividers>
-          {unassignedList.map(rec => (
-            <ListItemButton key={rec.recording_id} onClick={() => handleNavigateToAdjust(rec.recording_id)}>
-              <ListItemText primary={`録音ID: ${rec.recording_id}`} />
-            </ListItemButton>
-          ))}
-        </DialogContent>
-        <DialogActions><Button onClick={() => setIsRecordingListOpen(false)}>閉じる</Button></DialogActions>
-      </Dialog>
-    </Box>
+      </div>
+    </PageContext.Provider>
   );
 };
